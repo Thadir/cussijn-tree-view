@@ -11,7 +11,12 @@ for f in extension/*.js; do
 done
 
 echo "== JS unit tests =="
-node --test extension/*.test.js
+# --experimental-test-coverage reports the real, current number every
+# build - the README's coverage badge is a static snapshot (see its
+# caveat there for why line coverage on this file specifically needs
+# context, not just a bigger/smaller number); this is how to check
+# today's actual figure.
+node --test --experimental-test-coverage extension/*.test.js
 
 echo "== Packaging extension as .xpi =="
 mkdir -p dist

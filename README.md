@@ -162,18 +162,27 @@ DOM from here.
   `main` and every pull request, the same `build/build.sh` steps
   `./build/run.sh` runs locally.
 - **Versioning is automated via `.github/workflows/release.yml`** - no
-  Conventional Commits vocabulary anywhere in this repo's own process.
-  Mark a PR with what it should bump: either a GitHub label - **`major`**,
-  **`minor`**, or **`bugfix`** - or its title starting with
+  Conventional Commits vocabulary anywhere in this repo's own process,
+  and no stored credential beyond the built-in `GITHUB_TOKEN` (a
+  personal-access-token-based, fully hands-off design was tried and
+  deliberately dropped - a PAT with write access to the repo living in
+  Actions secrets is a real thing to be cautious about, not a call to
+  overrule). Mark a PR with what it should bump: either a GitHub label -
+  **`major`**, **`minor`**, or **`bugfix`** - or its title starting with
   `major:`/`minor:`/`bugfix:` (label wins if both are present). Merging
-  it computes the next `vX.Y.Z` from the latest tag and automatically
-  opens + auto-merges a small follow-up `release/vX.Y.Z` PR that bumps
-  `extension/manifest.json`'s `version` and adds a `CHANGELOG.md` entry -
-  no second manual click, that PR only has to pass the same required CI
-  check any merge to `main` does. **Merging THAT PR** is what tags the
-  repo and publishes a GitHub Release. A PR with none of
-  major/minor/bugfix on it (docs, CI tweaks, a Dependabot bump) merges
-  normally and cuts no release.
+  it computes the next `vX.Y.Z` from the latest tag and opens a small
+  `release/vX.Y.Z` PR bumping `extension/manifest.json`'s `version` and
+  adding a `CHANGELOG.md` entry - **you merge that PR yourself when
+  ready**; that's the one deliberate manual step, and it's also what
+  actually tags the repo and publishes a GitHub Release (see the comment
+  at the top of `release.yml` for why merging it can't be automated
+  without either that PAT or a GitHub anti-recursion limitation getting
+  in the way). GitHub sometimes holds that PR's own CI run for manual
+  "action_required" approval too, since it's opened by
+  `github-actions[bot]` - approve it from the Actions tab same as
+  reviewing the PR itself. A PR with none of major/minor/bugfix on it
+  (docs, CI tweaks, a Dependabot bump) merges normally and cuts no
+  release.
 - **Publishing a GitHub Release** triggers
   `.github/workflows/publish-thunderbird.yml`, which builds the `.xpi`,
   attaches it to the release, and signs + submits it to
@@ -198,13 +207,12 @@ that part for you:
 3. Add them to this repo as Actions secrets named `ATN_API_KEY` and
    `ATN_API_SECRET` (**Settings -> Secrets and variables -> Actions**).
 
-One caveat worth knowing before relying on this fully hands-off: this
-pipeline has not yet been exercised against a live ATN submission, so
-whether the very first submission of a brand-new listing goes through
-cleanly via the API, or needs one manual upload through ATN's web UI to
-create the listing first, hasn't been confirmed - if the automated
-`sign` step fails on the first release, try that first submission by
-hand and the automation should carry every release after that.
+Confirmed working end to end on this repo's actual v1.0.0 release: the
+`.xpi` uploaded, validated, and was auto-signed by ATN within a couple
+of minutes, with no manual step needed - the `web-ext` CLI's own
+"doesn't have signing enabled" warning during the upload turned out to
+just mean it doesn't wait around for that async result, not that
+signing itself didn't happen.
 
 ## Privacy
 

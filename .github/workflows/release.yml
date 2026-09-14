@@ -6,24 +6,42 @@ name: Release
 # (equivalently "patch:") - no Conventional Commits vocabulary
 # (feat/fix/"!") anywhere in this repo's own process.
 #
-# One merge is meant to be enough from a human's perspective - no
-# second, manually-merged "release PR" checkpoint. Getting there without
-# violating main's branch protection ("require a pull request before
-# merging" blocks even this workflow's own token from pushing straight
-# to main) takes two automatic hops through this SAME workflow, both
-# triggered by "a PR merged into main", told apart by the merged
-# branch's name:
+# Two automatic hops through this SAME workflow, both triggered by "a PR
+# merged into main", told apart by the merged branch's name - and ONE
+# deliberate manual click in between (merging the small PR hop 1 opens).
+# Two designs were tried and rejected before this one, both live against
+# this repo's actual first release:
+#   - A single commit pushed straight to main using a personal access
+#     token (bypassing "require a pull request" via admin exemption) -
+#     works, but means a PAT with write access to the repo has to live
+#     in Actions secrets. Asked, and the answer was no - a stored
+#     credential that powerful is a real, reasonable thing to not want,
+#     not a "just trust it" call to overrule.
+#   - Fully auto-merging the release/* PR with GITHUB_TOKEN (no PAT
+#     needed for THAT part) - but a GITHUB_TOKEN-driven merge doesn't
+#     trigger further workflow runs (GitHub's anti-recursion
+#     protection), so hop 2 (the actual tag + release) silently never
+#     fired at all.
+# This version keeps GITHUB_TOKEN only (no new secret) and keeps hop 1
+# open a PR, but does NOT auto-merge it - a human merging it (via the
+# GitHub UI, or by asking Claude to do it through its own authenticated
+# session, not a workflow's GITHUB_TOKEN) is a REAL user action, which
+# both sidesteps the anti-recursion limit AND is a legitimate checkpoint
+# before anything reaches the Thunderbird store, not just a workaround.
 #
-#   1. A real PR merges (any branch not named release/*) - this reads
-#      its label/title for a bump type, computes the next version from
-#      the latest vX.Y.Z tag, and opens + auto-merges a small
-#      "release/vX.Y.Z" PR that bumps extension/manifest.json's version
-#      and adds a CHANGELOG.md entry. That PR still has to pass CI's
-#      required "test" check like any other merge to main - typically
-#      well under a minute, and needs no human.
-#   2. THAT PR merges (recognized by its "release/" branch prefix) -
-#      this tags the now-current commit on main and publishes a GitHub
-#      Release, which is what actually triggers publish-thunderbird.yml.
+#   1. A real PR merges (any branch not named release/*) - reads its
+#      label/title for a bump type, computes the next version from the
+#      latest vX.Y.Z tag, and opens a "release/vX.Y.Z" PR bumping
+#      extension/manifest.json's version and adding a CHANGELOG.md
+#      entry. Note: GitHub sometimes holds this PR's own CI run for
+#      manual "action_required" approval, since it's a github-actions[bot]
+#      -authored branch - approve it (Actions tab, or
+#      `gh api -X POST .../actions/runs/<id>/approve`) same as you'd
+#      review the PR itself.
+#   2. A human merges that release/* PR - THIS is what tags the repo and
+#      publishes a GitHub Release, which is what actually triggers
+#      publish-thunderbird.yml. Recognized purely by branch name
+#      (startsWith(..., 'release/')), not by anything in its title/label.
 #
 # A PR with none of major/minor/bugfix on it (docs, CI tweaks, a
 # Dependabot bump) merges normally and cuts no release at all.
@@ -46,7 +64,7 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Cut the tag + GitHub Release (hop 2 - a release/* bump PR just merged)
+      - name: Cut the tag + GitHub Release (hop 2 - a human just merged a release/* PR)
         if: startsWith(github.event.pull_request.head.ref, 'release/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -97,7 +115,7 @@ jobs:
           esac
           echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
 
-      - name: Open and auto-merge the release bump PR
+      - name: Open the release bump PR (NOT auto-merged - see comment at top of this file)
         if: steps.bump.outputs.type != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -140,5 +158,4 @@ jobs:
           git push -u origin "$branch"
           gh pr create --base main --head "$branch" \
             --title "chore(release): v${VERSION}" \
-            --body "Automated ${BUMP_TYPE} bump to v${VERSION}, triggered by #${SOURCE_PR}. Merging this PR tags the release and publishes it to Thunderbird Add-ons."
-          gh pr merge --auto --squash "$branch"
+            --body "Automated ${BUMP_TYPE} bump to v${VERSION}, triggered by #${SOURCE_PR}. **Merge this PR yourself when ready** - that's what actually tags the release and publishes it to Thunderbird Add-ons (see the comment at the top of release.yml for why this step is manual)."

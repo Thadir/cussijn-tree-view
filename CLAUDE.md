@@ -161,6 +161,24 @@ e2e/                  podman-based Robot Framework smoke suite against a
   `groupByAutoPicked` check) - a user who deliberately wants to SEE "yes,
   this account has nothing tagged" by picking Tag mode themselves should
   still be able to.
+- **The "Tag" Group-by button relabels itself "Label" for a tag-less
+  account** (same `anyTagged` check as above, but applied unconditionally
+  - not gated by `groupByAutoPicked`, since the button's own wording
+  should stay honest even if the user manually clicked back into that
+  mode). This is a display-only rename, not a data-model change: Gmail's
+  own "labels" and Thunderbird's own "tags" are genuinely different
+  things under the hood (a label is folder membership - Gmail exposes
+  each label as its own real IMAP folder, which `buildFolderTree()`
+  already surfaces and drills into with no special-casing needed - a tag
+  is a flat per-message field Gmail's IMAP labels don't populate at
+  all). Don't attempt to synthesize a "these are the same dimension"
+  merge (e.g. deriving a message's "tags" from which label-folders it
+  appears in across `messages.query()`'s per-folder rows) without first
+  verifying, against a live Gmail account, whether there's a stable
+  cross-folder message identity available via this API to group same-
+  message folder-occurrences by - unverified, and a wrong guess here
+  (matching by subject+date+author, say) risks silently merging two
+  different emails that happen to share both.
 - **Sender-domain coloring uses `hashColor()`, not the fixed tag
   palette.** The set of domains isn't known ahead of time the way tags
   are, so each domain's color is derived deterministically from its own

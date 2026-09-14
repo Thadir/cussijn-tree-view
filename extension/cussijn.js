@@ -732,8 +732,18 @@ function initUi() {
       // a picture. Default to Sender domain instead for such an
       // account - still switchable by hand, and never overrides a
       // Group-by the user actually clicked (see groupByAutoPicked).
+      const anyTagged = allMessages.some((m) => (m.tags || []).length > 0);
+      // Gmail (via IMAP) has no Thunderbird tags at all - what Gmail
+      // itself calls "labels" are a completely different, folder-based
+      // concept (each label is a real IMAP folder Thunderbird already
+      // surfaces via buildFolderTree() - see CLAUDE.md; the treemap
+      // already drills into a Gmail account's labels as real folders,
+      // nothing new needed there). "Tag" as a button label is just the
+      // wrong word for an account like that - rename it to "Label",
+      // independent of whether groupByAutoPicked also switched the
+      // active mode away from it.
+      groupByEls.tag.textContent = anyTagged ? "Tag" : "Label";
       if (groupByAutoPicked) {
-        const anyTagged = allMessages.some((m) => (m.tags || []).length > 0);
         const preferred = anyTagged ? "tag" : "domain";
         if (groupBy !== preferred) {
           groupBy = preferred;

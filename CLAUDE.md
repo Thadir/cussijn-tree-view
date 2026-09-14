@@ -385,6 +385,12 @@ e2e/                  podman-based Robot Framework smoke suite against a
   this PR stale (`BEHIND`) if an unrelated PR merges first (found live:
   a Dependabot bump did exactly this) - `gh api -X PUT
   repos/OWNER/REPO/pulls/<n>/update-branch` re-syncs it before merging.
+  **Hop 2's own step needs its own `git config user.name`/`user.email`**
+  - it's a separate job step from hop 1's PR-opening one that already
+  sets those, and an annotated tag (`git tag -a`) fails outright without
+  a committer identity (`fatal: empty ident name`) - broke v1.0.1's
+  automated tag/release entirely the first time hop 2 actually ran
+  (fixed once it was found live, not theorized).
 - **A published GitHub Release is what triggers
   `.github/workflows/publish-thunderbird.yml`** (`on: release:
   types: [published]`, not `on: push: tags`) - it rebuilds the `.xpi`
@@ -407,6 +413,14 @@ e2e/                  podman-based Robot Framework smoke suite against a
   upload just means it doesn't wait around for that async result, not
   that signing itself didn't happen. Don't reintroduce the old
   "unverified, may need a manual first upload" hedge; this is settled.
+  **But the SECOND listed version needs one prerequisite, also confirmed
+  live (v1.0.1 failed on it)**: ATN rejects a second listed version via
+  the API with `You cannot add a listed version to this addon via the
+  API due to missing metadata. Please submit via the website` until the
+  add-on's Description is filled in on the ATN Developer Hub - addon-
+  level metadata no manifest key or API call in this pipeline sets, a
+  genuine one-time human step (see README's "Publishing to Thunderbird
+  Add-ons"), not a bug in `publish-thunderbird.yml` to chase.
 - **Dependabot has exactly two ecosystems to watch, both grouped weekly**
   (`.github/dependabot.yml`): `github-actions` (the actions these
   workflows use) and `docker` (`build/Containerfile`'s `node:20-slim`

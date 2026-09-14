@@ -69,6 +69,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # An annotated tag needs a committer identity - missing here
+          # (only the OTHER step, hop 1's PR-opening one, set this)
+          # failed v1.0.1's automated tag/release outright: "fatal: empty
+          # ident name". Found live, fixed once, not theorized.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           version=$(jq -r .version extension/manifest.json)
           tag="v${version}"
           git tag -a "$tag" -m "$tag"

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <clipPath id="cushionClip">
+      <rect x="8" y="8" width="112" height="112" rx="26" ry="26"/>
+    </clipPath>
+    <!-- The cushion-treemap technique itself: a per-cell radial highlight
+         (bright near one corner, fading to a dark edge) that reads as a
+         soft 3D "pillow" bump - van Wijk & van de Wetering's actual
+         shading trick, not just decoration. -->
+    <radialGradient id="bump" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.2"/>
+    </radialGradient>
+  </defs>
+
+  <!-- cushion base -->
+  <rect x="8" y="8" width="112" height="112" rx="26" ry="26" fill="#f2f1ec" stroke="#0b0b0b" stroke-opacity="0.08" stroke-width="2"/>
+
+  <!-- a small squarified treemap, tiled exactly inside the cushion -->
+  <g clip-path="url(#cushionClip)">
+    <rect x="8"  y="8"  width="62" height="70" fill="#2a78d6"/>
+    <rect x="70" y="8"  width="50" height="40" fill="#eb6834"/>
+    <rect x="70" y="48" width="50" height="30" fill="#1baf7a"/>
+    <rect x="8"  y="78" width="70" height="42" fill="#e87ba4"/>
+    <rect x="78" y="78" width="42" height="42" fill="#eda100"/>
+
+    <rect x="8"  y="8"  width="62" height="70" fill="url(#bump)"/>
+    <rect x="70" y="8"  width="50" height="40" fill="url(#bump)"/>
+    <rect x="70" y="48" width="50" height="30" fill="url(#bump)"/>
+    <rect x="8"  y="78" width="70" height="42" fill="url(#bump)"/>
+    <rect x="78" y="78" width="42" height="42" fill="url(#bump)"/>
+
+    <g stroke="#f2f1ec" stroke-width="3">
+      <line x1="70" y1="8"  x2="70"  y2="120"/>
+      <line x1="70" y1="48" x2="120" y2="48"/>
+      <line x1="8"  y1="78" x2="120" y2="78"/>
+      <line x1="78" y1="78" x2="78"  y2="120"/>
+    </g>
+  </g>
+
+  <!-- tufted-cushion corner buttons - the unmistakable "this is a cushion" cue -->
+  <g fill="#0b0b0b" fill-opacity="0.35">
+    <circle cx="26"  cy="26"  r="3.5"/>
+    <circle cx="102" cy="26"  r="3.5"/>
+    <circle cx="26"  cy="102" r="3.5"/>
+    <circle cx="102" cy="102" r="3.5"/>
+  </g>
+</svg>

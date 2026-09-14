@@ -1,0 +1,7 @@
+dist/
+*.xpi
+*.zip
+
+# OS junk
+.DS_Store
+Thumbs.db

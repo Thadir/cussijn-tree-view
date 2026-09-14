@@ -1,0 +1,31 @@
+# This project has no package.json/npm dependencies at all - cussijn.js
+# is plain, dependency-free browser JS (see CLAUDE.md). The only two
+# things Dependabot has anything to watch here are the GitHub Actions
+# used by the workflows in this directory, and the base image the build
+# container (build/Containerfile) is FROM. Each ecosystem's updates are
+# grouped into one weekly PR instead of one PR per action/image bump -
+# see .github/workflows/dependabot-auto-merge.yml for what happens to
+# those PRs once CI passes on them.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "docker"
+    directory: "/build"
+    schedule:
+      interval: "weekly"
+    groups:
+      docker:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"

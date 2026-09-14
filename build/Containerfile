@@ -1,0 +1,13 @@
+# Build/test container for Cussijn Tree View.
+#
+# Dev/CI tool only - this extension has no server-side component and no
+# native host. It just lints, tests, and packages the extension the same
+# reproducible way on any machine.
+FROM node:20-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+ENTRYPOINT ["/work/build/build.sh"]

@@ -1,0 +1,42 @@
+name: CI
+
+# Runs the exact same build/build.sh a local `./build/run.sh` runs inside
+# podman - just directly on the runner instead of in a container, since a
+# GitHub-hosted runner is already reproducible/ephemeral and doesn't need
+# podman's isolation. Keeping this a thin wrapper around build.sh (rather
+# than re-implementing the syntax-check/test/package steps in YAML) means
+# there's one source of truth for what "the build" actually is.
+#
+# The job id below ("test") is the required status check name branch
+# protection on main and the Dependabot auto-merge workflow both wait on -
+# rename it in all three places together if it ever changes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ensure zip is available
+        run: command -v zip >/dev/null || (sudo apt-get update && sudo apt-get install -y zip)
+
+      - name: Build & test
+        run: ./build/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cussijn-tree-view-xpi
+          path: dist/cussijn-tree-view.xpi
+          if-no-files-found: error

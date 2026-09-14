@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Cussijn Tree View</title>
+<style>
+  :root {
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f2f1ec;
+    --ink: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
+    --grid: #e1e0d9; --border: rgba(11,11,11,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232320;
+      --ink: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
+      --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--page); color: var(--ink);
+    font: 14px system-ui, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 1rem; margin: 0; }
+  header a { font-size: 0.85em; color: #2b6cb0; text-decoration: none; margin-left: auto; }
+  select, button {
+    font: inherit; font-size: 0.82em; padding: 5px 10px; border-radius: 100px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer;
+  }
+  button.active { background: var(--ink); color: var(--page); border-color: var(--ink); }
+  .breadcrumb { font-size: 0.85em; color: var(--ink-2); }
+  .breadcrumb button { background: none; border: none; text-decoration: underline; color: inherit; padding: 0; border-radius: 0; }
+  #status { padding: 8px 16px; font-size: 0.85em; color: var(--ink-muted); }
+  #treemap-wrap { flex: 1; padding: 8px; min-height: 300px; }
+  #treemap { position: relative; width: 100%; height: 100%; }
+  .cell {
+    position: absolute; border-radius: 3px; overflow: hidden; cursor: pointer;
+    display: flex; flex-direction: column; justify-content: flex-end; padding: 6px 8px;
+  }
+  .cell::after { content: ""; position: absolute; inset: 0; border: 2px solid var(--surface); border-radius: 3px; pointer-events: none; }
+  /* The actual cushion-treemap shading (van Wijk & van de Wetering): a
+     per-cell radial highlight so a nested cell reads as "sitting inside"
+     its parent without needing its own text label at every level. */
+  .cell::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: 3px;
+    background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.5), rgba(255,255,255,0.06) 50%, rgba(0,0,0,0.28) 100%);
+  }
+  .cell:hover { filter: brightness(1.1); z-index: 2; }
+  .cell.empty { background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 6px, var(--grid) 6px, var(--grid) 12px) !important; }
+  .cell.empty::before { display: none; }
+  .cell-label { color: #fff; font-size: 0.78em; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cell-sub { color: rgba(255,255,255,0.85); font-size: 0.68em; text-shadow: 0 1px 2px rgba(0,0,0,0.4); white-space: nowrap; overflow: hidden; }
+  .cell.tiny .cell-label, .cell.tiny .cell-sub { display: none; }
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 20; background: var(--ink); color: var(--page);
+    font-size: 0.8em; padding: 10px 12px; border-radius: 8px; max-width: 300px; opacity: 0;
+    transition: opacity 0.1s; line-height: 1.5;
+  }
+  .tooltip.show { opacity: 1; }
+  .tooltip .t-title { font-weight: 600; margin-bottom: 4px; }
+  .tooltip .t-row { display: flex; justify-content: space-between; gap: 16px; color: #cfcfc9; }
+  .tooltip .t-row b { color: var(--page); font-weight: 600; }
+  #legend { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 10px 16px; font-size: 0.78em; color: var(--ink-2); border-top: 1px solid var(--border); }
+  #legend .item { display: flex; align-items: center; gap: 6px; }
+  #legend .swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+  .filterbar {
+    padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .filterbar .label { font-size: 0.74em; font-weight: 600; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .filterbar .sep { width: 1px; align-self: stretch; background: var(--border); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 0.82em;
+    padding: 5px 10px 5px 8px; border-radius: 100px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--ink-2); cursor: pointer;
+  }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .chip.selected { color: #fff; border-color: transparent; }
+  #address-filter {
+    font: inherit; font-size: 0.82em; padding: 5px 10px; border-radius: 100px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink); width: 220px;
+  }
+  #address-filter::placeholder { color: var(--ink-muted); }
+  #filter-count {
+    font-size: 0.72em; font-weight: 600; color: #fff; background: #2a78d6;
+    border-radius: 100px; padding: 2px 8px;
+  }
+  #clear-filters { font-size: 0.82em; color: var(--ink-muted); background: none; border: none; cursor: pointer; text-decoration: underline; font-family: inherit; padding: 0; border-radius: 0; }
+
+  .go-btn {
+    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.5); color: #fff;
+    display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.12s;
+    padding: 0;
+  }
+  .cell:hover .go-btn { opacity: 1; }
+  .go-btn svg { width: 12px; height: 12px; }
+
+  .depth-ctrl { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82em; color: var(--ink-2); }
+  .depth-ctrl button { padding: 3px 9px; border-radius: 100px; }
+  .depth-ctrl span { min-width: 1em; text-align: center; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Cussijn Tree View</h1>
+    <select id="account-select"></select>
+    <button id="mode-count" class="active">By count</button>
+    <button id="mode-size">By size</button>
+    <span class="depth-ctrl" title="How many nested levels to show at once - folder(s), then Group-by, then sender, then individual messages">
+      Depth
+      <button id="depth-minus" type="button">−</button>
+      <span id="depth-value">2</span>
+      <button id="depth-plus" type="button">+</button>
+    </span>
+    <button id="refresh">Refresh</button>
+    <span class="breadcrumb" id="breadcrumb"></span>
+    <a href="options.html" target="_blank">About</a>
+  </header>
+
+  <div class="filterbar">
+    <span class="label">Group by</span>
+    <button id="group-tag" class="active">Tag</button>
+    <button id="group-domain">Sender domain</button>
+    <button id="group-address-type">To / Cc / Bcc</button>
+    <span class="sep"></span>
+    <span class="label">Filter</span>
+    <span id="tag-filters"></span>
+    <input id="address-filter" type="text" placeholder="Address contains, e.g. paypal.com">
+    <span id="filter-count" hidden></span>
+    <button id="clear-filters" hidden>Clear</button>
+  </div>
+
+  <div id="status">Loading...</div>
+  <div id="treemap-wrap"><div id="treemap"></div></div>
+  <div id="legend"></div>
+  <div class="tooltip" id="tooltip"></div>
+  <script src="cussijn.js"></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+name: release-please
+
+# Watches main for Conventional Commits and keeps one open "release PR"
+# up to date with the version bump + CHANGELOG.md that those commits
+# imply (feat: -> minor, fix: -> patch, a "!" or a BREAKING CHANGE
+# footer -> major; an explicit "Release-As: x.y.z" footer in any commit
+# overrides the computed bump, which is how the very first PR into this
+# repo forces 0.0.0 -> 1.0.0 instead of whatever feat!/fix would compute
+# on its own).
+#
+# Merging a feature PR into main does NOT by itself cut a release - it
+# only updates (or opens) that release PR. Cutting an actual release,
+# tagging it, and publishing a GitHub Release (which is what
+# publish-thunderbird.yml listens for) happens when THAT release PR
+# itself gets merged - a deliberate human checkpoint before anything
+# ships to the add-on store, not a fully unattended pipeline.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

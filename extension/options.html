@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Cussijn Tree View - About</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; margin: 1.5em; max-width: 620px; line-height: 1.5; }
+    h1 { font-size: 1.2em; }
+    code { background: rgba(0,0,0,0.06); padding: 0.1em 0.3em; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>Cussijn Tree View</h1>
+  <p>
+    A treemap of your mailbox, in the style of the old SequoiaView disk-space
+    tool and using the same "cushion treemap" shading technique (van Wijk
+    &amp; van de Wetering, TU Eindhoven) its name winks at - each folder is a
+    rectangle sized by message count (or size), colored by whichever message
+    tag is most common in it. Click the toolbar button (or press
+    Ctrl+Shift+Y, or right-click a folder and choose "Open in Cussijn Tree
+    View") to open it as a tab; click any folder's rectangle to drill into
+    its real contents - by whichever dimension you're grouping by, then by
+    sender.
+  </p>
+  <p>
+    This extension only ever calls Thunderbird's own <code>messenger.accounts</code>,
+    <code>messenger.messages</code>, and <code>messenger.menus</code> APIs to
+    read message headers/tags and add its one folder-pane context menu entry -
+    it never opens a network connection, never sends anything anywhere, and
+    has no companion process or native host to install. There is nothing else
+    to configure here.
+  </p>
+</body>
+</html>

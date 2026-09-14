@@ -1,0 +1,66 @@
+name: Publish to Thunderbird Add-ons
+
+# Fires when release-please.yml's release PR gets merged and it cuts an
+# actual GitHub Release (see the comment in release-please.yml - this is
+# the second half of that two-step flow, not triggered by every push to
+# main). Builds the .xpi from that release's exact tagged commit, attaches
+# it to the GitHub Release as a downloadable asset, then signs and
+# submits it to addons.thunderbird.net (ATN) for review via web-ext,
+# using the kewisch/action-web-ext action (maintained by a Thunderbird
+# add-ons contributor, and the one actually aware of ATN's API quirks).
+#
+# ATN runs its own instance of the addons-server codebase, separate from
+# addons.mozilla.org, still on the older v4 API (not AMO's v5) and with a
+# smaller metadata surface - hence the explicit apiUrlPrefix below rather
+# than the action's AMO-pointed default.
+#
+# Requires two repo secrets, neither of which this pipeline can generate
+# on its own - see the "Publishing to Thunderbird Add-ons" section in
+# README.md for how to get them:
+#   ATN_API_KEY, ATN_API_SECRET  - from your addons.thunderbird.net
+#   developer account's API keys page.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-submit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ensure zip is available
+        run: command -v zip >/dev/null || (sudo apt-get update && sudo apt-get install -y zip)
+
+      - name: Build & test
+        run: ./build/build.sh
+
+      - name: Attach .xpi to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/cussijn-tree-view.xpi --clobber
+
+      - name: Lint before submitting
+        uses: kewisch/action-web-ext@v1
+        with:
+          cmd: lint
+          source: dist/cussijn-tree-view.xpi
+
+      - name: Sign & submit to addons.thunderbird.net
+        uses: kewisch/action-web-ext@v1
+        with:
+          cmd: sign
+          channel: listed
+          source: dist/cussijn-tree-view.xpi
+          apiUrlPrefix: https://addons.thunderbird.net/api/v4
+          apiKey: ${{ secrets.ATN_API_KEY }}
+          apiSecret: ${{ secrets.ATN_API_SECRET }}

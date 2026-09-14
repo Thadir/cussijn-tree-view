@@ -6,41 +6,53 @@ name: Release
 # (equivalently "patch:") - no Conventional Commits vocabulary
 # (feat/fix/"!") anywhere in this repo's own process.
 #
-# ONE commit straight to main, no branch/PR for the version bump - an
-# earlier version of this workflow used a second "release/vX.Y.Z" PR
-# (branch protection blocks a direct push to main from the built-in
-# GITHUB_TOKEN), and hit three real problems live on this repo's actual
-# first release:
-#   1. GITHUB_TOKEN-driven pushes don't trigger further workflow runs
-#      (GitHub's anti-recursion protection) - so the PR merging never
-#      fired the next step at all, silently.
-#   2. GitHub required manual "action_required" approval before CI would
-#      even run on that bot-opened PR.
-#   3. Branch protection's "require branch up to date" kept marking that
-#      PR stale (BEHIND) every time an unrelated PR (a Dependabot bump)
-#      merged first, needing a manual re-sync.
-# All three go away by pushing with a real user token instead: this
-# repo's owner is an admin, and branch protection has
-# enforce_admins: false, so an authenticated push as an actual admin
-# user bypasses "require a pull request before merging" for this one,
-# narrowly-scoped, machine-generated commit - and being a real token
-# (not GITHUB_TOKEN), it triggers ci.yml and publish-thunderbird.yml
-# normally, no anti-recursion limit. Needs a repo secret only a human
-# can create - see README's "Continuous integration & releases" for how.
+# Two automatic hops through this SAME workflow, both triggered by "a PR
+# merged into main", told apart by the merged branch's name - and ONE
+# deliberate manual click in between (merging the small PR hop 1 opens).
+# Two designs were tried and rejected before this one, both live against
+# this repo's actual first release:
+#   - A single commit pushed straight to main using a personal access
+#     token (bypassing "require a pull request" via admin exemption) -
+#     works, but means a PAT with write access to the repo has to live
+#     in Actions secrets. Asked, and the answer was no - a stored
+#     credential that powerful is a real, reasonable thing to not want,
+#     not a "just trust it" call to overrule.
+#   - Fully auto-merging the release/* PR with GITHUB_TOKEN (no PAT
+#     needed for THAT part) - but a GITHUB_TOKEN-driven merge doesn't
+#     trigger further workflow runs (GitHub's anti-recursion
+#     protection), so hop 2 (the actual tag + release) silently never
+#     fired at all.
+# This version keeps GITHUB_TOKEN only (no new secret) and keeps hop 1
+# open a PR, but does NOT auto-merge it - a human merging it (via the
+# GitHub UI, or by asking Claude to do it through its own authenticated
+# session, not a workflow's GITHUB_TOKEN) is a REAL user action, which
+# both sidesteps the anti-recursion limit AND is a legitimate checkpoint
+# before anything reaches the Thunderbird store, not just a workaround.
 #
-# Deliberate tradeoff, not an oversight: this bump commit lands on main
-# BEFORE its own CI result is known (there's nothing left to gate it on
-# - no PR, no required check). Acceptable here because the commit is
-# entirely generated (a version string + a changelog entry, nothing
-# hand-written) and the actual feature/fix content it's releasing
-# already passed CI as its own separate, real PR.
+#   1. A real PR merges (any branch not named release/*) - reads its
+#      label/title for a bump type, computes the next version from the
+#      latest vX.Y.Z tag, and opens a "release/vX.Y.Z" PR bumping
+#      extension/manifest.json's version and adding a CHANGELOG.md
+#      entry. Note: GitHub sometimes holds this PR's own CI run for
+#      manual "action_required" approval, since it's a github-actions[bot]
+#      -authored branch - approve it (Actions tab, or
+#      `gh api -X POST .../actions/runs/<id>/approve`) same as you'd
+#      review the PR itself.
+#   2. A human merges that release/* PR - THIS is what tags the repo and
+#      publishes a GitHub Release, which is what actually triggers
+#      publish-thunderbird.yml. Recognized purely by branch name
+#      (startsWith(..., 'release/')), not by anything in its title/label.
+#
+# A PR with none of major/minor/bugfix on it (docs, CI tweaks, a
+# Dependabot bump) merges normally and cuts no release at all.
 on:
   pull_request:
     types: [closed]
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 jobs:
   release:
@@ -51,12 +63,22 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
-          # A real admin PAT, not the default GITHUB_TOKEN - see the
-          # comment above for why. persist-credentials keeps it as the
-          # remote's auth for the `git push` below.
-          token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Determine bump type
+      - name: Cut the tag + GitHub Release (hop 2 - a human just merged a release/* PR)
+        if: startsWith(github.event.pull_request.head.ref, 'release/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(jq -r .version extension/manifest.json)
+          tag="v${version}"
+          git tag -a "$tag" -m "$tag"
+          git push origin "$tag"
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes "Released from #${{ github.event.pull_request.number }}. See CHANGELOG.md."
+
+      - name: Determine bump type (hop 1 - a real PR just merged)
+        if: ${{ !startsWith(github.event.pull_request.head.ref, 'release/') }}
         id: bump
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -93,16 +115,18 @@ jobs:
           esac
           echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
 
-      - name: Bump manifest.json + CHANGELOG.md, commit, tag, push to main
+      - name: Open the release bump PR (NOT auto-merged - see comment at top of this file)
         if: steps.bump.outputs.type != ''
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
           SOURCE_PR: ${{ github.event.pull_request.number }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          branch="release/v${VERSION}"
+          git checkout -b "$branch"
 
           python3 - <<'PYEOF'
           import json, os
@@ -131,9 +155,7 @@ jobs:
 
           git add extension/manifest.json CHANGELOG.md
           git commit -m "chore(release): v${VERSION}"
-          git tag -a "v${VERSION}" -m "v${VERSION}"
-          git push origin main
-          git push origin "v${VERSION}"
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes "Released from #${SOURCE_PR} (${BUMP_TYPE}). See CHANGELOG.md."
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(release): v${VERSION}" \
+            --body "Automated ${BUMP_TYPE} bump to v${VERSION}, triggered by #${SOURCE_PR}. **Merge this PR yourself when ready** - that's what actually tags the release and publishes it to Thunderbird Add-ons (see the comment at the top of release.yml for why this step is manual)."

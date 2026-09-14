@@ -162,16 +162,27 @@ DOM from here.
   `main` and every pull request, the same `build/build.sh` steps
   `./build/run.sh` runs locally.
 - **Versioning is automated via `.github/workflows/release.yml`** - no
-  Conventional Commits vocabulary anywhere in this repo's own process.
-  Mark a PR with what it should bump: either a GitHub label - **`major`**,
-  **`minor`**, or **`bugfix`** - or its title starting with
+  Conventional Commits vocabulary anywhere in this repo's own process,
+  and no stored credential beyond the built-in `GITHUB_TOKEN` (a
+  personal-access-token-based, fully hands-off design was tried and
+  deliberately dropped - a PAT with write access to the repo living in
+  Actions secrets is a real thing to be cautious about, not a call to
+  overrule). Mark a PR with what it should bump: either a GitHub label -
+  **`major`**, **`minor`**, or **`bugfix`** - or its title starting with
   `major:`/`minor:`/`bugfix:` (label wins if both are present). Merging
-  it computes the next `vX.Y.Z` from the latest tag and, in one commit
-  pushed straight to `main`, bumps `extension/manifest.json`'s `version`,
-  adds a `CHANGELOG.md` entry, tags the repo, and publishes a GitHub
-  Release. A PR with none of major/minor/bugfix on it (docs, CI tweaks, a
-  Dependabot bump) merges normally and cuts no release. This needs a repo
-  secret only you can create - see "Release automation" below.
+  it computes the next `vX.Y.Z` from the latest tag and opens a small
+  `release/vX.Y.Z` PR bumping `extension/manifest.json`'s `version` and
+  adding a `CHANGELOG.md` entry - **you merge that PR yourself when
+  ready**; that's the one deliberate manual step, and it's also what
+  actually tags the repo and publishes a GitHub Release (see the comment
+  at the top of `release.yml` for why merging it can't be automated
+  without either that PAT or a GitHub anti-recursion limitation getting
+  in the way). GitHub sometimes holds that PR's own CI run for manual
+  "action_required" approval too, since it's opened by
+  `github-actions[bot]` - approve it from the Actions tab same as
+  reviewing the PR itself. A PR with none of major/minor/bugfix on it
+  (docs, CI tweaks, a Dependabot bump) merges normally and cuts no
+  release.
 - **Publishing a GitHub Release** triggers
   `.github/workflows/publish-thunderbird.yml`, which builds the `.xpi`,
   attaches it to the release, and signs + submits it to
@@ -183,25 +194,6 @@ DOM from here.
   `build/Containerfile` - grouping each into one weekly PR. Those PRs
   auto-merge (squash) once CI passes, via
   `.github/workflows/dependabot-auto-merge.yml`.
-
-### Release automation
-
-`release.yml` pushes its version-bump commit straight to `main`,
-bypassing "require a pull request before merging" - which only works
-because it authenticates as a real admin user, not the default
-`GITHUB_TOKEN` (that token can't push to a protected branch at all, and
-even where it could, GitHub doesn't let `GITHUB_TOKEN`-driven pushes
-trigger further workflow runs - both were tried and hit live on this
-repo's actual first release, see the comment at the top of
-`release.yml`). You'll need to create this secret yourself - it's tied
-to your own GitHub identity, so it's not something this repo's pipeline
-can generate on its own:
-
-1. **Settings -> Developer settings -> Personal access tokens** (a
-   fine-grained token scoped to just this repo, with **Contents:
-   Read and write**, is enough).
-2. Add it to this repo as an Actions secret named `RELEASE_TOKEN`
-   (**Settings -> Secrets and variables -> Actions**).
 
 ### Publishing to Thunderbird Add-ons
 

@@ -351,40 +351,40 @@ e2e/                  podman-based Robot Framework smoke suite against a
   signal present merges normally and cuts no release at all, which is
   the correct behavior for docs/CI/Dependabot PRs, not a bug to fix by
   making one of major/minor/bugfix the silent default.
-- **Merging a labeled/prefixed PR triggers ONE commit straight to
-  `main`** (bump `extension/manifest.json`'s `version`, add a
-  `CHANGELOG.md` entry, tag, publish a GitHub Release) - no second
-  branch or PR for the version bump. An earlier version of this workflow
-  DID use a second `release/vX.Y.Z` PR (branch protection blocks a
-  direct push to `main` from the built-in `GITHUB_TOKEN`), and hit three
-  real, confirmed-live problems on this repo's actual first release
-  before being ripped out:
-  1. **`GITHUB_TOKEN`-driven pushes don't trigger further workflow
-     runs** (GitHub's anti-recursion protection, undocumented in this
-     file until it broke something) - the `release/*` PR merging never
-     fired the tag/release step at all. Silently - it just never
-     happened, no error anywhere.
-  2. GitHub required **manual "action_required" approval** before CI
-     would even run on that bot-opened PR.
-  3. Branch protection's `strict: true` (require branch up to date) kept
-     marking that PR **stale (BEHIND)** every time an unrelated PR (a
-     Dependabot bump) merged first, needing a manual `update-branch`
-     API call to unstick.
-  The fix: `release.yml` authenticates with a real admin user's PAT
-  (`secrets.RELEASE_TOKEN`, not `GITHUB_TOKEN`) to push directly to
-  `main`. This works specifically because the repo owner is an admin and
-  branch protection has `enforce_admins: false` - an authenticated push
-  as an actual admin bypasses "require a pull request before merging"
-  for this one narrowly-scoped, entirely machine-generated commit, and
-  being a real token (not `GITHUB_TOKEN`) it doesn't hit the
-  anti-recursion limit either, so `publish-thunderbird.yml` fires
-  normally off the resulting Release. **Deliberate tradeoff**: this
-  commit lands on `main` before its own CI result is known (nothing left
-  to gate it on) - acceptable because it's fully generated (a version
-  string + a changelog line) and the actual feature/fix content it
-  releases already passed CI as its own real PR. Don't reintroduce a
-  `release/*` branch/PR "to be safe" without re-reading points 1-3 above
-  first - each was found by actually running this, not theorized.
+- **Merging a labeled/prefixed PR opens a second, small `release/vX.Y.Z`
+  PR - merging THAT one (a deliberate, permanent manual step) is what
+  tags the repo and publishes a GitHub Release.** Two other designs were
+  tried and rejected, both live against this repo's actual first
+  release, before landing here:
+  1. A single commit pushed straight to `main` using a personal access
+     token stored in Actions secrets (bypassing "require a pull request"
+     via the admin-exemption on `enforce_admins: false`) - technically
+     worked, but was explicitly declined: a stored PAT with write access
+     to the repo is a real credential to be cautious about, not a call
+     for this pipeline to overrule on the user's behalf. **Don't
+     reintroduce a PAT-based direct-push design without the user asking
+     for it again** - this was a considered "no," not an oversight.
+  2. Auto-merging the `release/*` PR with `GITHUB_TOKEN` (no PAT
+     needed) - but a `GITHUB_TOKEN`-driven merge doesn't trigger further
+     workflow runs (GitHub's anti-recursion protection, undocumented in
+     this file until it broke something) - the `release/*` PR merging
+     silently never fired the tag/release step at all. No error
+     anywhere; it just never happened.
+  The current design keeps `GITHUB_TOKEN` only (hop 1 opens the PR) but
+  does NOT auto-merge it - a human merging it (the GitHub UI, or asking
+  Claude to do it through its own authenticated `gh` session, which is a
+  real user action, not a workflow's `GITHUB_TOKEN`) sidesteps the
+  anti-recursion limit for free, with no new secret, while also being a
+  legitimate checkpoint before anything reaches the Thunderbird store -
+  not merely a workaround. GitHub sometimes holds that PR's own CI run
+  for manual "action_required" approval too, since it's opened by
+  `github-actions[bot]` - that's a normal part of reviewing/merging it,
+  not a bug (`gh api -X POST repos/OWNER/REPO/actions/runs/<id>/approve`
+  clears it, same as clicking Approve in the Actions tab). Branch
+  protection's `strict: true` (require branch up to date) can also mark
+  this PR stale (`BEHIND`) if an unrelated PR merges first (found live:
+  a Dependabot bump did exactly this) - `gh api -X PUT
+  repos/OWNER/REPO/pulls/<n>/update-branch` re-syncs it before merging.
 - **A published GitHub Release is what triggers
   `.github/workflows/publish-thunderbird.yml`** (`on: release:
   types: [published]`, not `on: push: tags`) - it rebuilds the `.xpi`

@@ -30,11 +30,11 @@ jobs:
   build-and-submit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -50,13 +50,13 @@ jobs:
         run: gh release upload "${{ github.event.release.tag_name }}" dist/cussijn-tree-view.xpi --clobber
 
       - name: Lint before submitting
-        uses: kewisch/action-web-ext@v1
+        uses: kewisch/action-web-ext@v2
         with:
           cmd: lint
           source: dist/cussijn-tree-view.xpi
 
       - name: Sign & submit to addons.thunderbird.net
-        uses: kewisch/action-web-ext@v1
+        uses: kewisch/action-web-ext@v2
         with:
           cmd: sign
           channel: listed

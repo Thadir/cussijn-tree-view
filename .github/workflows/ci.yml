@@ -17,7 +17,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -40,3 +40,43 @@ jobs:
           name: cussijn-tree-view-xpi
           path: dist/cussijn-tree-view.xpi
           if-no-files-found: error
+
+      # Only on an actual push to main - a PR's coverage isn't "the"
+      # coverage until it's merged, and publishing on every PR run would
+      # make the badges branch churn on unmerged/abandoned work.
+      #
+      # Publishes to a separate, UNPROTECTED "badges" branch (not main)
+      # via a shields.io "endpoint" JSON file - GITHUB_TOKEN can push
+      # there freely (main's branch protection doesn't apply), no PAT
+      # needed. The README's badge points at
+      # raw.githubusercontent.com/.../badges/coverage-badge.json via
+      # img.shields.io/endpoint, so it always reflects whatever's on
+      # that branch - no manual "go refresh the badge" step, unlike an
+      # earlier version of this which was a hand-typed static number.
+      - name: Compute & publish coverage badge data
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          output=$(node --test --experimental-test-coverage extension/*.test.js 2>&1) || true
+          pct=$(echo "$output" | awk -F'|' '/all files/ {gsub(/ /,"",$2); print $2}')
+          if [ -z "$pct" ]; then
+            echo "Could not parse a coverage percentage from node's output - not touching the badge." >&2
+            echo "$output"
+            exit 0
+          fi
+
+          color=red
+          awk "BEGIN{exit !($pct >= 80)}" && color=brightgreen
+          awk "BEGIN{exit !($pct >= 50 && $pct < 80)}" && color=yellow
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          rm -rf /tmp/badges-repo
+          git clone --branch badges --single-branch "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" /tmp/badges-repo
+          printf '{"schemaVersion":1,"label":"line coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > /tmp/badges-repo/coverage-badge.json
+          cd /tmp/badges-repo
+          git add coverage-badge.json
+          git diff --cached --quiet && echo "Coverage unchanged (${pct}%) - nothing to push." && exit 0
+          git commit -m "chore: update coverage badge data (${pct}%)"
+          git push origin badges

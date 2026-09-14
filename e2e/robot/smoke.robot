@@ -21,7 +21,7 @@ Extension Installs And Activates
     File Should Exist    ${XPI}
     Install Extension Temporarily    ${XPI}
     ${info}=    Extension Should Be Active
-    Should Be Equal    ${info}[id]    cussijn-tree-view@local
+    Should Be Equal    ${info}[id]    cussijn-tree-view@thadir.net
 
 Extension Page Opens Without Erroring
     [Documentation]    Opens cussijn.html as a real tabmail contentTab

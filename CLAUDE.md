@@ -84,10 +84,32 @@ e2e/                  podman-based Robot Framework smoke suite against a
                       does NOT yet reach into the page's own DOM - see
                       e2e/README.md's "Known limitation" before assuming
                       otherwise or trying to add a content-level assertion.
+                      fixtures/generate_fixture.py generates a throwaway
+                      profile's synthetic (fake senders, *.test domains)
+                      Local Folders mail; robot/screenshot.robot
+                      (`./e2e/screenshot.sh`, on-demand only, not CI)
+                      uses it to produce docs/screenshot.png for the
+                      README.
 ```
 
 ## Conventions
 
+- **`manifest.json`'s `applications.gecko.id` is
+  `cussijn-tree-view@thadir.net` - PERMANENT, never bump it per
+  release.** This is the add-on's actual identity to Thunderbird/ATN -
+  what makes a new `.xpi` register as "a new version of the same
+  add-on" instead of an unrelated one - NOT something that tracks the
+  version number, which already lives in `manifest.json`'s separate
+  `"version"` field and is what the release pipeline (`release.yml`)
+  actually bumps every release. Originally shipped as the placeholder
+  `cussijn-tree-view@local` for v1.0.0/v1.0.1; changed once, deliberately,
+  to a permanent domain-based id before the add-on had real users -
+  that's the only cheap time to do it, since changing it again would
+  orphan the current ATN listing (a new id is a brand-new listing to
+  ATN, Description/Homepage and all) and break auto-update for anyone
+  who already installed it. Don't ever suggest bumping this per-version
+  "to match" the version number - that idea was raised once and
+  corrected before it shipped; the version field already does that job.
 - **No dispatch table.** `cussijn.js` calls
   `messenger.accounts`/`messenger.messages` directly instead of relaying
   through `background.js`. A dispatch table (a single choke point that
@@ -385,6 +407,12 @@ e2e/                  podman-based Robot Framework smoke suite against a
   this PR stale (`BEHIND`) if an unrelated PR merges first (found live:
   a Dependabot bump did exactly this) - `gh api -X PUT
   repos/OWNER/REPO/pulls/<n>/update-branch` re-syncs it before merging.
+  **Hop 2's own step needs its own `git config user.name`/`user.email`**
+  - it's a separate job step from hop 1's PR-opening one that already
+  sets those, and an annotated tag (`git tag -a`) fails outright without
+  a committer identity (`fatal: empty ident name`) - broke v1.0.1's
+  automated tag/release entirely the first time hop 2 actually ran
+  (fixed once it was found live, not theorized).
 - **A published GitHub Release is what triggers
   `.github/workflows/publish-thunderbird.yml`** (`on: release:
   types: [published]`, not `on: push: tags`) - it rebuilds the `.xpi`
@@ -407,6 +435,14 @@ e2e/                  podman-based Robot Framework smoke suite against a
   upload just means it doesn't wait around for that async result, not
   that signing itself didn't happen. Don't reintroduce the old
   "unverified, may need a manual first upload" hedge; this is settled.
+  **But the SECOND listed version needs one prerequisite, also confirmed
+  live (v1.0.1 failed on it)**: ATN rejects a second listed version via
+  the API with `You cannot add a listed version to this addon via the
+  API due to missing metadata. Please submit via the website` until the
+  add-on's Description is filled in on the ATN Developer Hub - addon-
+  level metadata no manifest key or API call in this pipeline sets, a
+  genuine one-time human step (see README's "Publishing to Thunderbird
+  Add-ons"), not a bug in `publish-thunderbird.yml` to chase.
 - **Dependabot has exactly two ecosystems to watch, both grouped weekly**
   (`.github/dependabot.yml`): `github-actions` (the actions these
   workflows use) and `docker` (`build/Containerfile`'s `node:20-slim`
@@ -416,17 +452,49 @@ e2e/                  podman-based Robot Framework smoke suite against a
 
 ## Known gaps / TODO
 
+- **The README's coverage badge is CI-generated, not a static number
+  someone has to remember to refresh.** A step in `.github/workflows/
+  ci.yml` (only `if: github.ref == 'refs/heads/main' && github.event_name
+  == 'push'` - not on every PR, so unmerged/abandoned work never
+  touches it) runs `node --test --experimental-test-coverage`, parses
+  the "all files" line-% out of its human-readable table output (`awk
+  -F'|' '/all files/ {...}'` - there's no JSON/lcov output mode for
+  this reporter, hence parsing text), and pushes a small shields.io
+  "endpoint" JSON file (`{schemaVersion, label, message, color}`) to a
+  separate, UNPROTECTED `badges` branch - `git push` there needs no PAT,
+  main's branch protection doesn't apply to a different branch.
+  `build/build.sh` also runs with `--experimental-test-coverage` now
+  (matches what CI computes) so `./build/run.sh` shows the same number
+  locally. The badge itself (`img.shields.io/endpoint?url=<raw
+  coverage-badge.json on the badges branch>`) always reflects whatever
+  JSON is currently there - editing the badge URL or the JSON schema
+  are the only ways to change what it shows, there is no manual
+  "refresh" step to remember. This IS whole-file LINE coverage of
+  `cussijn.js`, though, which mixes the fully-tested pure logic with
+  `initUi()`'s deliberately-untested DOM wiring (see the
+  `cussijn.test.js` bullet in Architecture above) - don't read a modest
+  number here as "half the logic is untested," and don't try to
+  inflate it by unit-testing DOM wiring that's supposed to stay covered
+  by the e2e suite instead; the README states this caveat plainly right
+  next to the badge - keep that pairing.
 - There IS now an automated test against a real Thunderbird
   (`e2e/`, `./e2e/run.sh`) - but it's a shallow smoke test (does the real
   .xpi install and activate, does its page open without erroring), not a
   DOM/interaction test. It cannot currently read anything out of
   cussijn.html's own rendered page (see e2e/README.md's "Known
   limitation" - genuinely investigated and confirmed, not just
-  unattempted) or exercise real `messenger.*` data (empty profile, no
-  seeded mail - see e2e/README.md's "No mail fixture data"). The unit
-  tests remain what actually covers the pure logic (folder/tag
-  aggregation, the treemap layout math); don't treat the e2e suite as a
-  substitute for either that or a real DOM-rendering test.
+  unattempted). The unit tests remain what actually covers the pure
+  logic (folder/tag aggregation, the treemap layout math); don't treat
+  the e2e suite as a substitute for either that or a real DOM-rendering
+  test. **Synthetic mail fixture data now exists though**
+  (`e2e/fixtures/generate_fixture.py` - see e2e/README.md's "Mail
+  fixture data"), used by `e2e/robot/screenshot.robot`
+  (`./e2e/screenshot.sh`) to generate the README's `docs/screenshot.png`
+  against a real headless Thunderbird - a full-window screenshot works
+  fine (`Marionette.screenshot()`, browser-window level) even though
+  reading the page's own DOM still doesn't. Don't wire `screenshot.sh`
+  into CI/`run.sh` - it's on-demand only, regenerating an identical
+  image on every push would be pure waste.
 - `buildFolderTree()` assumes a message's `folder.id` (from
   `messages.query()`) matches a `MailFolder.id` in the SAME account's
   `rootFolder.subFolders` tree (from `accounts.list(true)`, a separate

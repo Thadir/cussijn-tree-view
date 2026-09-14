@@ -18,7 +18,7 @@ host, no companion process required. It only reads mail headers and
 tags via Thunderbird's own `messenger.accounts`/`messenger.messages`
 APIs and never opens a network connection.
 
-## Install (no admin rights needed)
+## Install
 
 There's no native-messaging host to set up - just the add-on itself:
 

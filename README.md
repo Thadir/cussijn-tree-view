@@ -139,6 +139,23 @@ recursive content-dimension grouping down to individual messages, the
 squarified treemap layout - see `extension/cussijn.test.js`), then
 packages `extension/` into `dist/cussijn-tree-view.xpi`.
 
+### End-to-end testing against a real Thunderbird
+
+Firefox can't run this extension at all (no `messenger.*` namespace), so
+`e2e/` builds the real, packaged `.xpi` and installs it into a real,
+headless Thunderbird, driven over
+[Marionette](https://firefox-source-docs.mozilla.org/testing/marionette/index.html)
+by a [Robot Framework](https://robotframework.org/) smoke suite:
+
+```
+./e2e/run.sh
+```
+
+It's a load-time smoke test, not a full interaction test - see
+`e2e/README.md` for exactly what's verified and a documented, real
+limitation (not just an unwritten TODO) on reaching into the page's own
+DOM from here.
+
 ## Continuous integration & releases
 
 - **CI** (`.github/workflows/ci.yml`) builds and unit-tests every push to
@@ -218,6 +235,8 @@ itself.
 - `extension/options.html` - a short about page (no actual settings to
   configure).
 - `build/` - the podman build/lint/test/package pipeline.
+- `e2e/` - the podman Robot Framework smoke suite against a real
+  headless Thunderbird over Marionette (`./e2e/run.sh`).
 - `.github/workflows/` - CI, the release-please automated-versioning
   workflow, the Thunderbird Add-ons publish workflow, and Dependabot
   auto-merge.

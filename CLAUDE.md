@@ -76,6 +76,14 @@ extension/
 build/                podman-based lint/test/package pipeline (Containerfile,
                       build.sh, run.sh) - `./build/run.sh`, no Node needed
                       on the host at all.
+e2e/                  podman-based Robot Framework smoke suite against a
+                      REAL headless Thunderbird over Marionette (not
+                      Firefox - see e2e/README.md for why that's a category
+                      error for this extension) - `./e2e/run.sh`. Verified
+                      to actually install the built .xpi and open its page;
+                      does NOT yet reach into the page's own DOM - see
+                      e2e/README.md's "Known limitation" before assuming
+                      otherwise or trying to add a content-level assertion.
 ```
 
 ## Conventions
@@ -319,10 +327,17 @@ build/                podman-based lint/test/package pipeline (Containerfile,
 
 ## Known gaps / TODO
 
-- No automated end-to-end test against a real Thunderbird - same
-  limitation as any WebExtension project developed outside of one; the
-  unit tests cover the pure logic (folder/tag aggregation, the treemap
-  layout math), not the real `messenger.*` calls or DOM rendering.
+- There IS now an automated test against a real Thunderbird
+  (`e2e/`, `./e2e/run.sh`) - but it's a shallow smoke test (does the real
+  .xpi install and activate, does its page open without erroring), not a
+  DOM/interaction test. It cannot currently read anything out of
+  cussijn.html's own rendered page (see e2e/README.md's "Known
+  limitation" - genuinely investigated and confirmed, not just
+  unattempted) or exercise real `messenger.*` data (empty profile, no
+  seeded mail - see e2e/README.md's "No mail fixture data"). The unit
+  tests remain what actually covers the pure logic (folder/tag
+  aggregation, the treemap layout math); don't treat the e2e suite as a
+  substitute for either that or a real DOM-rendering test.
 - `buildFolderTree()` assumes a message's `folder.id` (from
   `messages.query()`) matches a `MailFolder.id` in the SAME account's
   `rootFolder.subFolders` tree (from `accounts.list(true)`, a separate

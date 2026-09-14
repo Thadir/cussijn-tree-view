@@ -1,6 +1,8 @@
 dist/
 *.xpi
 *.zip
+e2e/results/
+__pycache__/
 
 # OS junk
 .DS_Store

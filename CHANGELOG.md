@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.1 - bugfix
+
+From #5.
+
 ## v1.0.0 - major
 
 From #1.

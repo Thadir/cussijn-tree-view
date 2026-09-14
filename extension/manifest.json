@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Cussijn Tree View",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A cushion-treemap view of your mailbox, colored by tag, sized by message count or size - see what's actually taking up space, drill into any folder's real contents. Entirely local, reads mail only, no other extension or service required.",
   "homepage_url": "https://github.com/Thadir/cussijn-tree-view",
   "applications": {

@@ -147,6 +147,20 @@ e2e/                  podman-based Robot Framework smoke suite against a
   front so switching modes is a re-render, not a re-fetch - keep that
   property if adding a fourth dimension, rather than re-aggregating per
   mode switch.
+- **The default Group-by mode is picked per account, not hardcoded to
+  "tag."** Found live: a Gmail account (via IMAP) had zero
+  Thunderbird-tagged messages, so Group-by: Tag colored literally every
+  cell the same muted Uncategorized gray - technically correct, useless
+  as a picture. `loadData()` now checks whether the just-loaded account
+  has ANY tagged message at all and defaults to "domain" instead when it
+  doesn't - but only while `groupByAutoPicked` is still true.
+  `setGroupBy()` (a user's own click) sets it false permanently for the
+  session, so this auto-pick never overrides a Group-by the user
+  actually chose, even if they then switch to another tag-less account.
+  Don't make this unconditional (i.e. don't drop the
+  `groupByAutoPicked` check) - a user who deliberately wants to SEE "yes,
+  this account has nothing tagged" by picking Tag mode themselves should
+  still be able to.
 - **Sender-domain coloring uses `hashColor()`, not the fixed tag
   palette.** The set of domains isn't known ahead of time the way tags
   are, so each domain's color is derived deterministically from its own
@@ -220,7 +234,11 @@ e2e/                  podman-based Robot Framework smoke suite against a
   `loadAccounts()` now prefers that account over `accounts[0]` whenever
   a pending folder names one. Keep deriving it this way rather than
   having background.js's menu handler pass a second `&account=` query
-  param; the folder id already carries what's needed.
+  param; the folder id already carries what's needed. Once consumed,
+  `rebuild()` strips `?folder=...` back out of the visible address bar
+  via `history.replaceState()` - a raw internal id like
+  `?folder=account4%3A%2F%2FINBOX` left on display after it's done its
+  job is just noise (also found live, same screenshot).
 - **The account `<select>` shows each account's own identity email
   (`accountDisplayName()`), not `account.name`.** `account.name` is
   whatever display name Thunderbird's settings (or an import wizard)

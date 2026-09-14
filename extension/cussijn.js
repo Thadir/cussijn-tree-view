@@ -645,6 +645,11 @@ function initUi() {
 
   let sizeMode = "count";
   let groupBy = "tag";
+  // True until the user explicitly clicks a Group-by button - lets
+  // loadData() pick a sensible default per account (see there) without
+  // ever overriding a choice the user actually made. Set false inside
+  // setGroupBy().
+  let groupByAutoPicked = true;
   // How many levels to show NESTED at once, starting from the current
   // stack's top level - depth 1 reproduces the original click-per-level
   // behavior exactly; anything higher draws each level's children
@@ -664,9 +669,14 @@ function initUi() {
   // Set by background.js's folder-pane context menu entry
   // ("Open in Cussijn Tree View" -> cussijn.html?folder=<id>") so the
   // view opens already drilled into the folder that was right-clicked,
-  // instead of always landing on the full "All folders" level. Consumed
-  // once, by the first rebuild() after load - a later manual refresh or
-  // filter change starts back over at the folder level like any other.
+  // instead of always landing on the full "All folders" level - and,
+  // via accountIdFromFolderId() in loadAccounts(), also picks the RIGHT
+  // account. Consumed once, by the first rebuild() after load (which
+  // also strips it back out of the visible address bar via
+  // history.replaceState() - a raw internal id like
+  // ?folder=account4%3A%2F%2FINBOX has no business staying on display
+  // once it's done its job) - a later manual refresh or filter change
+  // starts back over at the folder level like any other.
   let pendingFolderId = new URLSearchParams(location.search).get("folder");
 
   function fmtSize(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : mb.toFixed(1) + " MB"; }
@@ -714,6 +724,23 @@ function initUi() {
       allMessages = messages;
       tagLabels = labels;
       renderTagFilterChips();
+
+      // Coloring by Tag when an account has no tagged messages at all
+      // (e.g. a Gmail account via IMAP, where Thunderbird's own tags
+      // just don't apply - found live) renders every cell the same
+      // muted Uncategorized gray: technically correct, but useless as
+      // a picture. Default to Sender domain instead for such an
+      // account - still switchable by hand, and never overrides a
+      // Group-by the user actually clicked (see groupByAutoPicked).
+      if (groupByAutoPicked) {
+        const anyTagged = allMessages.some((m) => (m.tags || []).length > 0);
+        const preferred = anyTagged ? "tag" : "domain";
+        if (groupBy !== preferred) {
+          groupBy = preferred;
+          for (const [key, el] of Object.entries(groupByEls)) el.classList.toggle("active", key === preferred);
+        }
+      }
+
       rebuild();
       statusEl.hidden = true;
     } catch (e) {
@@ -733,6 +760,14 @@ function initUi() {
     if (pendingFolderId) {
       const path = findFolderPath(stack[0].nodes, pendingFolderId);
       pendingFolderId = null;
+      // The account/folder id has already done its job (picking the
+      // account in loadAccounts(), drilling below) - strip it from the
+      // visible address bar rather than leaving a raw internal id like
+      // ?folder=account4%3A%2F%2FINBOX on display. Doesn't affect
+      // anything: nothing else re-reads location.search after startup.
+      if (typeof history !== "undefined" && history.replaceState) {
+        history.replaceState(null, "", location.pathname);
+      }
       if (path) {
         // Replays drillInto() once per ancestor so the breadcrumb ends
         // up showing the real path, not a single jump with no trail.
@@ -1023,6 +1058,7 @@ function initUi() {
   }
 
   function setGroupBy(mode) {
+    groupByAutoPicked = false; // the user just made an explicit choice - loadData() stops overriding it
     groupBy = mode;
     for (const [key, el] of Object.entries(groupByEls)) el.classList.toggle("active", key === mode);
     rebuild();

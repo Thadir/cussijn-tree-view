@@ -385,6 +385,12 @@ e2e/                  podman-based Robot Framework smoke suite against a
   this PR stale (`BEHIND`) if an unrelated PR merges first (found live:
   a Dependabot bump did exactly this) - `gh api -X PUT
   repos/OWNER/REPO/pulls/<n>/update-branch` re-syncs it before merging.
+  **Hop 2's own step needs its own `git config user.name`/`user.email`**
+  - it's a separate job step from hop 1's PR-opening one that already
+  sets those, and an annotated tag (`git tag -a`) fails outright without
+  a committer identity (`fatal: empty ident name`) - broke v1.0.1's
+  automated tag/release entirely the first time hop 2 actually ran
+  (fixed once it was found live, not theorized).
 - **A published GitHub Release is what triggers
   `.github/workflows/publish-thunderbird.yml`** (`on: release:
   types: [published]`, not `on: push: tags`) - it rebuilds the `.xpi`

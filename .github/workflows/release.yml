@@ -1,0 +1,144 @@
+name: Release
+
+# major/minor/bugfix versioning, signalled either way (both are checked,
+# label wins if both are present): a PR label named "major"/"minor"/
+# "bugfix", or the PR title starting with "major:"/"minor:"/"bugfix:"
+# (equivalently "patch:") - no Conventional Commits vocabulary
+# (feat/fix/"!") anywhere in this repo's own process.
+#
+# One merge is meant to be enough from a human's perspective - no
+# second, manually-merged "release PR" checkpoint. Getting there without
+# violating main's branch protection ("require a pull request before
+# merging" blocks even this workflow's own token from pushing straight
+# to main) takes two automatic hops through this SAME workflow, both
+# triggered by "a PR merged into main", told apart by the merged
+# branch's name:
+#
+#   1. A real PR merges (any branch not named release/*) - this reads
+#      its label/title for a bump type, computes the next version from
+#      the latest vX.Y.Z tag, and opens + auto-merges a small
+#      "release/vX.Y.Z" PR that bumps extension/manifest.json's version
+#      and adds a CHANGELOG.md entry. That PR still has to pass CI's
+#      required "test" check like any other merge to main - typically
+#      well under a minute, and needs no human.
+#   2. THAT PR merges (recognized by its "release/" branch prefix) -
+#      this tags the now-current commit on main and publishes a GitHub
+#      Release, which is what actually triggers publish-thunderbird.yml.
+#
+# A PR with none of major/minor/bugfix on it (docs, CI tweaks, a
+# Dependabot bump) merges normally and cuts no release at all.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Cut the tag + GitHub Release (hop 2 - a release/* bump PR just merged)
+        if: startsWith(github.event.pull_request.head.ref, 'release/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(jq -r .version extension/manifest.json)
+          tag="v${version}"
+          git tag -a "$tag" -m "$tag"
+          git push origin "$tag"
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes "Released from #${{ github.event.pull_request.number }}. See CHANGELOG.md."
+
+      - name: Determine bump type (hop 1 - a real PR just merged)
+        if: ${{ !startsWith(github.event.pull_request.head.ref, 'release/') }}
+        id: bump
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          type=""
+          for want in major minor bugfix; do
+            if echo ",$PR_LABELS," | grep -qi ",$want,"; then type="$want"; break; fi
+          done
+          if [ -z "$type" ]; then
+            shopt -s nocasematch
+            case "$PR_TITLE" in
+              major:*) type="major" ;;
+              minor:*) type="minor" ;;
+              bugfix:*|patch:*) type="bugfix" ;;
+            esac
+          fi
+          echo "type=$type" >> "$GITHUB_OUTPUT"
+          if [ -z "$type" ]; then
+            echo "No major/minor/bugfix label or title prefix on #${{ github.event.pull_request.number }} - not cutting a release."
+          fi
+
+      - name: Compute next version
+        if: steps.bump.outputs.type != ''
+        id: version
+        run: |
+          last_tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          last_tag=${last_tag:-v0.0.0}
+          IFS='.' read -r major minor patch <<< "${last_tag#v}"
+          case "${{ steps.bump.outputs.type }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            bugfix) patch=$((patch + 1)) ;;
+          esac
+          echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+
+      - name: Open and auto-merge the release bump PR
+        if: steps.bump.outputs.type != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+          SOURCE_PR: ${{ github.event.pull_request.number }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          branch="release/v${VERSION}"
+          git checkout -b "$branch"
+
+          python3 - <<'PYEOF'
+          import json, os
+
+          version = os.environ["VERSION"]
+          bump_type = os.environ["BUMP_TYPE"]
+          source_pr = os.environ["SOURCE_PR"]
+
+          with open("extension/manifest.json") as f:
+              manifest = json.load(f)
+          manifest["version"] = version
+          with open("extension/manifest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+
+          entry = f"## v{version} - {bump_type}\n\nFrom #{source_pr}.\n\n"
+          try:
+              with open("CHANGELOG.md") as f:
+                  existing = f.read()
+          except FileNotFoundError:
+              existing = "# Changelog\n\n"
+          header, _, rest = existing.partition("\n\n")
+          with open("CHANGELOG.md", "w") as f:
+              f.write(header + "\n\n" + entry + rest)
+          PYEOF
+
+          git add extension/manifest.json CHANGELOG.md
+          git commit -m "chore(release): v${VERSION}"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(release): v${VERSION}" \
+            --body "Automated ${BUMP_TYPE} bump to v${VERSION}, triggered by #${SOURCE_PR}. Merging this PR tags the release and publishes it to Thunderbird Add-ons."
+          gh pr merge --auto --squash "$branch"

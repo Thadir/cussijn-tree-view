@@ -1,0 +1,30 @@
+name: Dependabot auto-merge
+
+# Turns on GitHub's native auto-merge for a Dependabot PR as soon as it's
+# opened - it does NOT merge immediately. The actual merge only happens
+# once every required status check (the "test" job in ci.yml, enforced
+# by main's branch protection) reports success - "when tests are 100%",
+# as asked for. A human reviewer can still turn auto-merge back off on
+# any individual PR if something about a particular bump looks wrong.
+#
+# pull_request_target (not pull_request) so this has write access to
+# enable auto-merge even though it's Dependabot's own fork-less PR -
+# fine here since the job does nothing with the PR's actual code, only
+# calls the GitHub API on it.
+on:
+  pull_request_target:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge for this Dependabot PR
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --squash "$PR_URL"

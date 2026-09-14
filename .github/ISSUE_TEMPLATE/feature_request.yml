@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an idea for Cussijn Tree View.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: What are you trying to do that the extension doesn't currently help with?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+      description: Your idea for how this could work - doesn't need to be fully fleshed out.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you've already tried or considered?
+    validations:
+      required: false

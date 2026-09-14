@@ -1,0 +1,39 @@
+name: E2E (real Thunderbird)
+
+# Runs e2e/run.sh's build-and-test in a container on the runner directly
+# (docker, not podman - GitHub-hosted runners ship it and there's no
+# reason to install podman just to match local dev exactly here, the way
+# ci.yml matches build.sh exactly for the podman-specific packaging
+# step). See e2e/README.md for what this suite does and does not verify.
+#
+# Deliberately NOT wired into main's required status checks yet (unlike
+# the "test" job in ci.yml) - this is new and container-heavy; give it a
+# run or two before promoting it to required.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build e2e image
+        run: docker build -t cussijn-tree-view-e2e -f e2e/Containerfile .
+
+      - name: Run Thunderbird Marionette smoke suite
+        run: docker run --rm -v "$PWD":/work cussijn-tree-view-e2e
+
+      - name: Upload Robot Framework results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-robot-results
+          path: e2e/results/
+          if-no-files-found: warn

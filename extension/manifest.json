@@ -1,0 +1,43 @@
+{
+  "manifest_version": 2,
+  "name": "Cussijn Tree View",
+  "version": "1.0.0",
+  "description": "A cushion-treemap view of your mailbox, colored by tag, sized by message count or size - see what's actually taking up space, drill into any folder's real contents. Entirely local, reads mail only, no other extension or service required.",
+  "applications": {
+    "gecko": {
+      "id": "cussijn-tree-view@local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  },
+  "permissions": [
+    "accountsRead",
+    "accountsFolders",
+    "messagesRead",
+    "messagesTags",
+    "menus"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "browser_action": {
+    "default_title": "Cussijn Tree View",
+    "default_icon": "icons/icon.svg"
+  },
+  "commands": {
+    "open-cussijn-tree-view": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y"
+      },
+      "description": "Open Cussijn Tree View"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tabs": true
+  }
+}

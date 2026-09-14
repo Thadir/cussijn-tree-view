@@ -416,20 +416,31 @@ e2e/                  podman-based Robot Framework smoke suite against a
 
 ## Known gaps / TODO
 
-- **The README's coverage badge (53%) is a static, manually-computed
-  snapshot, not CI-generated or auto-updated** - `node --test
-  --experimental-test-coverage` (also now run every `./build/run.sh`,
-  see `build/build.sh`) reports the real current number; re-run it and
-  update the badge by hand if it's worth refreshing, rather than wiring
-  up a whole badge-automation pipeline for a number that moves rarely.
-  That 53% is whole-file LINE coverage of `cussijn.js`, which mixes the
-  fully-tested pure logic with `initUi()`'s deliberately-untested DOM
-  wiring (see the `cussijn.test.js` bullet in Architecture above) -
-  don't read it as "half the logic is untested" and don't try to
+- **The README's coverage badge is CI-generated, not a static number
+  someone has to remember to refresh.** A step in `.github/workflows/
+  ci.yml` (only `if: github.ref == 'refs/heads/main' && github.event_name
+  == 'push'` - not on every PR, so unmerged/abandoned work never
+  touches it) runs `node --test --experimental-test-coverage`, parses
+  the "all files" line-% out of its human-readable table output (`awk
+  -F'|' '/all files/ {...}'` - there's no JSON/lcov output mode for
+  this reporter, hence parsing text), and pushes a small shields.io
+  "endpoint" JSON file (`{schemaVersion, label, message, color}`) to a
+  separate, UNPROTECTED `badges` branch - `git push` there needs no PAT,
+  main's branch protection doesn't apply to a different branch.
+  `build/build.sh` also runs with `--experimental-test-coverage` now
+  (matches what CI computes) so `./build/run.sh` shows the same number
+  locally. The badge itself (`img.shields.io/endpoint?url=<raw
+  coverage-badge.json on the badges branch>`) always reflects whatever
+  JSON is currently there - editing the badge URL or the JSON schema
+  are the only ways to change what it shows, there is no manual
+  "refresh" step to remember. This IS whole-file LINE coverage of
+  `cussijn.js`, though, which mixes the fully-tested pure logic with
+  `initUi()`'s deliberately-untested DOM wiring (see the
+  `cussijn.test.js` bullet in Architecture above) - don't read a modest
+  number here as "half the logic is untested," and don't try to
   inflate it by unit-testing DOM wiring that's supposed to stay covered
   by the e2e suite instead; the README states this caveat plainly right
-  next to the badge - keep that pairing, don't let the number drift
-  from its explanation.
+  next to the badge - keep that pairing.
 - There IS now an automated test against a real Thunderbird
   (`e2e/`, `./e2e/run.sh`) - but it's a shallow smoke test (does the real
   .xpi install and activate, does its page open without erroring), not a

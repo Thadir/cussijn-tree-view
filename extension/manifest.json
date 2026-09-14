@@ -6,7 +6,7 @@
   "homepage_url": "https://github.com/Thadir/cussijn-tree-view",
   "applications": {
     "gecko": {
-      "id": "cussijn-tree-view@local",
+      "id": "cussijn-tree-view@thadir.net",
       "strict_min_version": "115.0"
     }
   },

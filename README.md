@@ -1,5 +1,7 @@
 # Cussijn Tree View
 
+![line coverage: 53%](https://img.shields.io/badge/line_coverage-53%25-yellow)
+
 A [SequoiaView](https://en.wikipedia.org/wiki/SequoiaView)-style treemap
 of your mailbox: each folder is a rectangle sized by message count (or
 size), colored by whichever mail tag is most common in it. Hover a
@@ -138,6 +140,17 @@ testing (the real folder-tree drill-down, tag/domain aggregation,
 recursive content-dimension grouping down to individual messages, the
 squarified treemap layout - see `extension/cussijn.test.js`), then
 packages `extension/` into `dist/cussijn-tree-view.xpi`.
+
+**On that coverage badge**: it's a static snapshot (`node --test
+--experimental-test-coverage`, whole-file line coverage of
+`cussijn.js`), not auto-updated - re-run `./build/run.sh` for today's
+real number. It also needs context to not be misread: `cussijn.js`
+mixes the pure logic above (fully covered) with `initUi()`'s DOM wiring
+and the real `messenger.*` calls, which are deliberately **not**
+unit-tested - they need a live Thunderbird to exercise meaningfully,
+which is what `e2e/` is for instead (see "End-to-end testing" above).
+That untested-by-design block is most of what drags the line-coverage
+number down; it isn't a gap in the pure-logic tests themselves.
 
 ### End-to-end testing against a real Thunderbird
 

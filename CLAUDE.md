@@ -416,6 +416,20 @@ e2e/                  podman-based Robot Framework smoke suite against a
 
 ## Known gaps / TODO
 
+- **The README's coverage badge (53%) is a static, manually-computed
+  snapshot, not CI-generated or auto-updated** - `node --test
+  --experimental-test-coverage` (also now run every `./build/run.sh`,
+  see `build/build.sh`) reports the real current number; re-run it and
+  update the badge by hand if it's worth refreshing, rather than wiring
+  up a whole badge-automation pipeline for a number that moves rarely.
+  That 53% is whole-file LINE coverage of `cussijn.js`, which mixes the
+  fully-tested pure logic with `initUi()`'s deliberately-untested DOM
+  wiring (see the `cussijn.test.js` bullet in Architecture above) -
+  don't read it as "half the logic is untested" and don't try to
+  inflate it by unit-testing DOM wiring that's supposed to stay covered
+  by the e2e suite instead; the README states this caveat plainly right
+  next to the badge - keep that pairing, don't let the number drift
+  from its explanation.
 - There IS now an automated test against a real Thunderbird
   (`e2e/`, `./e2e/run.sh`) - but it's a shallow smoke test (does the real
   .xpi install and activate, does its page open without erroring), not a

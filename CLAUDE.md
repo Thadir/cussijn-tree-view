@@ -84,6 +84,12 @@ e2e/                  podman-based Robot Framework smoke suite against a
                       does NOT yet reach into the page's own DOM - see
                       e2e/README.md's "Known limitation" before assuming
                       otherwise or trying to add a content-level assertion.
+                      fixtures/generate_fixture.py generates a throwaway
+                      profile's synthetic (fake senders, *.test domains)
+                      Local Folders mail; robot/screenshot.robot
+                      (`./e2e/screenshot.sh`, on-demand only, not CI)
+                      uses it to produce docs/screenshot.png for the
+                      README.
 ```
 
 ## Conventions
@@ -422,11 +428,18 @@ e2e/                  podman-based Robot Framework smoke suite against a
   DOM/interaction test. It cannot currently read anything out of
   cussijn.html's own rendered page (see e2e/README.md's "Known
   limitation" - genuinely investigated and confirmed, not just
-  unattempted) or exercise real `messenger.*` data (empty profile, no
-  seeded mail - see e2e/README.md's "No mail fixture data"). The unit
-  tests remain what actually covers the pure logic (folder/tag
-  aggregation, the treemap layout math); don't treat the e2e suite as a
-  substitute for either that or a real DOM-rendering test.
+  unattempted). The unit tests remain what actually covers the pure
+  logic (folder/tag aggregation, the treemap layout math); don't treat
+  the e2e suite as a substitute for either that or a real DOM-rendering
+  test. **Synthetic mail fixture data now exists though**
+  (`e2e/fixtures/generate_fixture.py` - see e2e/README.md's "Mail
+  fixture data"), used by `e2e/robot/screenshot.robot`
+  (`./e2e/screenshot.sh`) to generate the README's `docs/screenshot.png`
+  against a real headless Thunderbird - a full-window screenshot works
+  fine (`Marionette.screenshot()`, browser-window level) even though
+  reading the page's own DOM still doesn't. Don't wire `screenshot.sh`
+  into CI/`run.sh` - it's on-demand only, regenerating an identical
+  image on every push would be pure waste.
 - `buildFolderTree()` assumes a message's `folder.id` (from
   `messages.query()`) matches a `MailFolder.id` in the SAME account's
   `rootFolder.subFolders` tree (from `accounts.list(true)`, a separate

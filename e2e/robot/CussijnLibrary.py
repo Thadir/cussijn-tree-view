@@ -18,11 +18,17 @@ and confirming that tab actually navigated to the extension's own URL
 tab creation works) rather than erroring out.
 """
 
+import base64
+import os
 import subprocess
+import sys
 import time
 
 from marionette_driver.addons import Addons
 from marionette_driver.marionette import Marionette
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "fixtures"))
+import generate_fixture  # noqa: E402
 
 MARIONETTE_PORT = 2828
 STARTUP_TIMEOUT_S = 30
@@ -38,6 +44,17 @@ class CussijnLibrary:
         self._proc = None
         self._marionette = None
         self._addon_id = None
+
+    def generate_fixture_profile(self, profile_dir):
+        """Seeds profile_dir with e2e/fixtures/generate_fixture.py's
+        synthetic Local Folders account and messages - entirely
+        made-up senders/subjects on *.test domains, nothing from any
+        real mailbox. Call this BEFORE Start Thunderbird (it writes
+        prefs.js/Mail files Thunderbird only reads at startup). Returns
+        the message count written.
+        """
+        os.makedirs(profile_dir, exist_ok=True)
+        return generate_fixture.generate(profile_dir)
 
     def start_thunderbird(self, profile_dir, log_path="/tmp/thunderbird.log"):
         """Launches a real, headless Thunderbird with Marionette enabled
@@ -172,6 +189,52 @@ class CussijnLibrary:
                 f"Tab never navigated to {url!r} within 10s (last seen: {last_seen!r})"
             )
         return url
+
+    def index_local_inbox(self):
+        """Forces Thunderbird to parse the fixture mbox dropped into the
+        seeded profile's Local Folders/Inbox (see
+        e2e/fixtures/generate_fixture.py) into real messages -
+        confirmed live: a raw mbox file is NOT auto-indexed on startup,
+        only nsIMsgLocalMailFolder.parseFolder() (chrome-only XPCOM)
+        actually triggers it. Returns the resulting message count.
+        """
+        result = self._marionette.execute_async_script(
+            """
+            let [resolve] = arguments;
+            (async () => {
+              try {
+                const accounts = MailServices.accounts.accounts;
+                const inbox = accounts[0].incomingServer.rootFolder.subFolders
+                  .find(f => f.name === "Inbox");
+                const localInbox = inbox.QueryInterface(Ci.nsIMsgLocalMailFolder);
+                await new Promise((res, rej) => {
+                  localInbox.parseFolder(null, {
+                    OnStartRunningUrl() {},
+                    OnStopRunningUrl(url, status) {
+                      status === 0 ? res() : rej(new Error("parseFolder status " + status));
+                    },
+                  });
+                });
+                resolve({ ok: true, count: inbox.getTotalMessages(false) });
+              } catch (e) {
+                resolve({ ok: false, error: String(e) });
+              }
+            })();
+            """
+        )
+        if not result or not result.get("ok"):
+            raise AssertionError(f"Failed to index the fixture Inbox: {result}")
+        return result["count"]
+
+    def take_screenshot(self, path):
+        """Saves a full-window PNG screenshot (Marionette's
+        `screenshot()` - works at the browser-window level, unlike
+        content-DOM access, which this Thunderbird build doesn't expose
+        for tabmail contentTabs; see the module docstring) to `path`.
+        """
+        png_b64 = self._marionette.screenshot(format="base64", full=False)
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(png_b64))
 
     def get_last_tab_url(self):
         """The currently-loaded URI of the most recently opened tabmail

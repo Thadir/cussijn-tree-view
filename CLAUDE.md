@@ -205,6 +205,31 @@ e2e/                  podman-based Robot Framework smoke suite against a
   *color* comes from its own sender via `hashColor()` instead (a unique
   id would hash to a meaningless color; the sender at least visually
   clusters one person's mail even at the finest level).
+- **A `MailFolderId` is `"<accountId>://<path>"` - confirmed live** (e.g.
+  `account4://INBOX`, from an actual right-click in a real multi-account
+  profile), not assumed from docs. This matters because
+  `pendingFolderId` (the `?folder=` deep link background.js's folder-pane
+  entry sets) can name a folder in ANY account, not just whichever one
+  `loadAccounts()` happens to default to - found live, the same way: a
+  Gmail account's folder, right-clicked, opened showing the FIRST-listed
+  account's (IMAP's) data instead, because `loadAccounts()` picked
+  `accounts[0]` unconditionally before `pendingFolderId` was even
+  consulted. `accountIdFromFolderId()` pulls the account id back out of
+  the folder id itself - no separate account id needs to travel
+  alongside `folder=` in the URL, since it's already encoded there - and
+  `loadAccounts()` now prefers that account over `accounts[0]` whenever
+  a pending folder names one. Keep deriving it this way rather than
+  having background.js's menu handler pass a second `&account=` query
+  param; the folder id already carries what's needed.
+- **The account `<select>` shows each account's own identity email
+  (`accountDisplayName()`), not `account.name`.** `account.name` is
+  whatever display name Thunderbird's settings (or an import wizard)
+  happened to give the account - not necessarily distinguishing at a
+  glance between e.g. two accounts both left named "Mail". The identity
+  email (`thadir@thadir.net` vs `thadir@gmail.com`) is unambiguous and
+  matches how the user actually thinks of "which account" - falls back
+  to `account.name` only for the edge case of an account with no
+  identities at all.
 - **`nextLevelNodes()`, `layoutTree()`, and the "Depth" control turn the
   same drill-down into an at-once nested view, not just a click-per-level
   one.** `nextLevelNodes(n)` is `drillInto()`'s "what's one step inside
@@ -357,14 +382,17 @@ e2e/                  podman-based Robot Framework smoke suite against a
 - `buildFolderTree()` assumes a message's `folder.id` (from
   `messages.query()`) matches a `MailFolder.id` in the SAME account's
   `rootFolder.subFolders` tree (from `accounts.list(true)`, a separate
-  call) exactly - both are documented as the same `MailFolderId` type,
-  but this hasn't been checked against a live Thunderbird session yet.
-  If folders mysteriously stop appearing in the tree (messages get
-  fetched but their folder never groups under anything), check this
-  first - the same category of risk as other API-shape assumptions in
-  this codebase that have turned out wrong only once actually run
-  against a live Thunderbird (see the squarify orientation bug found via
-  a real screenshot, or the `accounts.list()` boolean note above).
+  call) exactly - now indirectly supported by a live session (a
+  right-clicked folder's tree rendered correctly, just under the wrong
+  account - see the `MailFolderId` bullet above - which only works at
+  all if this matching succeeds), but still not exhaustively verified
+  across every account/folder-type combination. If folders mysteriously
+  stop appearing in the tree (messages get fetched but their folder
+  never groups under anything), check this first - the same category of
+  risk as other API-shape assumptions in this codebase that have turned
+  out wrong only once actually run against a live Thunderbird (see the
+  squarify orientation bug found via a real screenshot, or the
+  `accounts.list()` boolean note above).
 - Only shows the currently-selected account, not a combined cross-account
   view - the account picker switches between accounts rather than
   merging them. Revisit if that turns out to matter in practice.

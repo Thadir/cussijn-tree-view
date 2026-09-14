@@ -373,6 +373,25 @@ test("colorForKey: tag looks up the tag palette by label, domain/sender/message 
   assert.equal(colorForKey("sender", null, {}), "#5a5a57"); // groupMessages()'s overflow node
 });
 
+test("accountIdFromFolderId reads the account id encoded in a real MailFolderId (\"<accountId>://<path>\")", () => {
+  const { accountIdFromFolderId } = freshCussijn();
+  assert.equal(accountIdFromFolderId("account4://INBOX"), "account4");
+  assert.equal(accountIdFromFolderId("account1://Some/Nested/Path"), "account1");
+  assert.equal(accountIdFromFolderId(null), null);
+  assert.equal(accountIdFromFolderId(""), null);
+  assert.equal(accountIdFromFolderId("not-a-folder-id"), null);
+});
+
+test("accountDisplayName prefers the account's own identity email over its Thunderbird display name", () => {
+  const { accountDisplayName } = freshCussijn();
+  assert.equal(
+    accountDisplayName({ name: "My IMAP account", identities: [{ email: "thadir@thadir.net" }] }),
+    "thadir@thadir.net"
+  );
+  assert.equal(accountDisplayName({ name: "No identities here", identities: [] }), "No identities here");
+  assert.equal(accountDisplayName({ name: "No identities key" }), "No identities key");
+});
+
 test("assignPalette gives every tag a distinct, stable color", () => {
   const { assignPalette } = freshCussijn();
   const palette = assignPalette(["Banking", "Travel", "Personal"]);

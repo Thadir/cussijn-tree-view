@@ -49,6 +49,34 @@ function folderName(path) {
   return parts.length ? parts[parts.length - 1] : path;
 }
 
+// A Thunderbird MailFolderId is "<accountId>://<path>" (confirmed live -
+// e.g. "account4://INBOX", not assumed from docs) - so the account a
+// deep-linked folder belongs to is already encoded in the folder id
+// itself, no separate account id needs to travel alongside it. Used to
+// pick the RIGHT account for a folder-pane "Open in Cussijn Tree View"
+// deep link instead of always defaulting to the first account in the
+// list - found live: right-clicking a folder in a second (Gmail)
+// account still opened showing the first-listed (IMAP) account, because
+// loadAccounts() ignored pendingFolderId entirely when choosing
+// currentAccountId.
+function accountIdFromFolderId(folderId) {
+  if (!folderId) return null;
+  const idx = folderId.indexOf("://");
+  return idx === -1 ? null : folderId.slice(0, idx);
+}
+
+// The account picker previously showed `account.name` - whatever the
+// user (or an import wizard) happened to type as that account's
+// display name in Thunderbird's settings, which is not necessarily
+// distinguishing at a glance (e.g. two accounts both just named "Mail").
+// The account's own identity email is unambiguous and matches what the
+// user actually thinks of the account as - falls back to `account.name`
+// only for the edge case of an account with no identities at all.
+function accountDisplayName(account) {
+  const email = account.identities && account.identities[0] && account.identities[0].email;
+  return email || account.name;
+}
+
 function assignPalette(tagNames) {
   const palette = { Uncategorized: UNCATEGORIZED_COLOR, [EMPTY_LABEL]: "#5a5a57" };
   tagNames.forEach((name, i) => { palette[name] = PALETTE_ORDER[i % PALETTE_ORDER.length]; });
@@ -658,12 +686,20 @@ function initUi() {
     for (const a of accounts) {
       const opt = document.createElement("option");
       opt.value = a.id;
-      opt.textContent = a.name;
+      opt.textContent = accountDisplayName(a);
       accountSelect.appendChild(opt);
     }
     if (accounts.length) {
-      currentAccountId = accounts[0].id;
-      myAddresses = (accounts[0].identities || []).map((i) => i.email).filter(Boolean);
+      // A folder-pane deep link (?folder=<id>) names the account it
+      // belongs to via the folder id itself - honor that instead of
+      // always defaulting to the first account, or a folder deep-linked
+      // from a non-first account would silently show that first
+      // account's unrelated data instead (see accountIdFromFolderId()).
+      const pendingAccountId = accountIdFromFolderId(pendingFolderId);
+      const chosen = (pendingAccountId && accounts.find((a) => a.id === pendingAccountId)) || accounts[0];
+      currentAccountId = chosen.id;
+      accountSelect.value = currentAccountId; // keep the <select> in sync with the deep-linked account
+      myAddresses = (chosen.identities || []).map((i) => i.email).filter(Boolean);
     }
   }
 
@@ -1036,6 +1072,8 @@ function initUi() {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    accountIdFromFolderId,
+    accountDisplayName,
     computeBreakdowns,
     buildFolderTree,
     findFolderPath,

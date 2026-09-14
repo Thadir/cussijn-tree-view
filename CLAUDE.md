@@ -351,30 +351,40 @@ e2e/                  podman-based Robot Framework smoke suite against a
   signal present merges normally and cuts no release at all, which is
   the correct behavior for docs/CI/Dependabot PRs, not a bug to fix by
   making one of major/minor/bugfix the silent default.
-- **Merging a real PR does not cut a release by itself - it triggers a
-  SECOND, fully automatic hop through the same workflow.** `release.yml`
-  runs on every `pull_request: closed` into `main` and tells the two
-  hops apart by the merged branch's name:
-  1. A real PR merges (any branch not starting `release/`) - reads its
-     label/title for a bump type, computes the next `vX.Y.Z` from the
-     latest git tag, and opens + immediately auto-merges a
-     `release/vX.Y.Z` PR bumping `extension/manifest.json`'s `version`
-     and prepending a `CHANGELOG.md` entry.
-  2. That `release/*` PR merges - THIS is what tags the repo and
-     publishes a GitHub Release. Recognized purely by branch name
-     (`startsWith(..., 'release/')`), not by anything in its title/label,
-     so don't rename that branch prefix without updating both `if:`
-     conditions in `release.yml` together.
-  This two-hop shape exists only because main's branch protection
-  ("require a pull request before merging") blocks even this workflow's
-  own `GITHUB_TOKEN` from pushing the version-bump commit straight to
-  `main` - from a human's perspective it's still one merge, since hop 2
-  is fully automatic (auto-merge waiting on the same required `test`
-  check every other PR waits on, no manual click) unlike release-please's
-  old deliberately-manual "release PR" checkpoint. Don't add a manual
-  approval gate back onto the `release/*` PR "for safety" without
-  flagging that as a deliberate scope change - the whole point of this
-  redesign was removing the second click.
+- **Merging a labeled/prefixed PR triggers ONE commit straight to
+  `main`** (bump `extension/manifest.json`'s `version`, add a
+  `CHANGELOG.md` entry, tag, publish a GitHub Release) - no second
+  branch or PR for the version bump. An earlier version of this workflow
+  DID use a second `release/vX.Y.Z` PR (branch protection blocks a
+  direct push to `main` from the built-in `GITHUB_TOKEN`), and hit three
+  real, confirmed-live problems on this repo's actual first release
+  before being ripped out:
+  1. **`GITHUB_TOKEN`-driven pushes don't trigger further workflow
+     runs** (GitHub's anti-recursion protection, undocumented in this
+     file until it broke something) - the `release/*` PR merging never
+     fired the tag/release step at all. Silently - it just never
+     happened, no error anywhere.
+  2. GitHub required **manual "action_required" approval** before CI
+     would even run on that bot-opened PR.
+  3. Branch protection's `strict: true` (require branch up to date) kept
+     marking that PR **stale (BEHIND)** every time an unrelated PR (a
+     Dependabot bump) merged first, needing a manual `update-branch`
+     API call to unstick.
+  The fix: `release.yml` authenticates with a real admin user's PAT
+  (`secrets.RELEASE_TOKEN`, not `GITHUB_TOKEN`) to push directly to
+  `main`. This works specifically because the repo owner is an admin and
+  branch protection has `enforce_admins: false` - an authenticated push
+  as an actual admin bypasses "require a pull request before merging"
+  for this one narrowly-scoped, entirely machine-generated commit, and
+  being a real token (not `GITHUB_TOKEN`) it doesn't hit the
+  anti-recursion limit either, so `publish-thunderbird.yml` fires
+  normally off the resulting Release. **Deliberate tradeoff**: this
+  commit lands on `main` before its own CI result is known (nothing left
+  to gate it on) - acceptable because it's fully generated (a version
+  string + a changelog line) and the actual feature/fix content it
+  releases already passed CI as its own real PR. Don't reintroduce a
+  `release/*` branch/PR "to be safe" without re-reading points 1-3 above
+  first - each was found by actually running this, not theorized.
 - **A published GitHub Release is what triggers
   `.github/workflows/publish-thunderbird.yml`** (`on: release:
   types: [published]`, not `on: push: tags`) - it rebuilds the `.xpi`
@@ -390,11 +400,13 @@ e2e/                  podman-based Robot Framework smoke suite against a
   relying on the action's AMO-pointed default. Needs two repo secrets
   (`ATN_API_KEY`/`ATN_API_SECRET`) from an ATN developer account that
   only a human can create - see README's "Publishing to Thunderbird
-  Add-ons" section. **Unverified against a real ATN submission**: whether
-  a brand-new listing's very first version can go through this API path
-  cleanly, or needs one manual web-UI upload first to create the listing
-  - don't assume either way without checking, and see that same README
-  section before troubleshooting a failed first release.
+  Add-ons" section. **Confirmed working against a real, brand-new ATN
+  listing** (this repo's actual v1.0.0): the `.xpi` uploaded, validated,
+  and was auto-signed within a couple of minutes with no manual step -
+  `web-ext`'s own "doesn't have signing enabled" warning during the
+  upload just means it doesn't wait around for that async result, not
+  that signing itself didn't happen. Don't reintroduce the old
+  "unverified, may need a manual first upload" hedge; this is settled.
 - **Dependabot has exactly two ecosystems to watch, both grouped weekly**
   (`.github/dependabot.yml`): `github-actions` (the actions these
   workflows use) and `docker` (`build/Containerfile`'s `node:20-slim`

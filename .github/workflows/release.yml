@@ -6,35 +6,41 @@ name: Release
 # (equivalently "patch:") - no Conventional Commits vocabulary
 # (feat/fix/"!") anywhere in this repo's own process.
 #
-# One merge is meant to be enough from a human's perspective - no
-# second, manually-merged "release PR" checkpoint. Getting there without
-# violating main's branch protection ("require a pull request before
-# merging" blocks even this workflow's own token from pushing straight
-# to main) takes two automatic hops through this SAME workflow, both
-# triggered by "a PR merged into main", told apart by the merged
-# branch's name:
+# ONE commit straight to main, no branch/PR for the version bump - an
+# earlier version of this workflow used a second "release/vX.Y.Z" PR
+# (branch protection blocks a direct push to main from the built-in
+# GITHUB_TOKEN), and hit three real problems live on this repo's actual
+# first release:
+#   1. GITHUB_TOKEN-driven pushes don't trigger further workflow runs
+#      (GitHub's anti-recursion protection) - so the PR merging never
+#      fired the next step at all, silently.
+#   2. GitHub required manual "action_required" approval before CI would
+#      even run on that bot-opened PR.
+#   3. Branch protection's "require branch up to date" kept marking that
+#      PR stale (BEHIND) every time an unrelated PR (a Dependabot bump)
+#      merged first, needing a manual re-sync.
+# All three go away by pushing with a real user token instead: this
+# repo's owner is an admin, and branch protection has
+# enforce_admins: false, so an authenticated push as an actual admin
+# user bypasses "require a pull request before merging" for this one,
+# narrowly-scoped, machine-generated commit - and being a real token
+# (not GITHUB_TOKEN), it triggers ci.yml and publish-thunderbird.yml
+# normally, no anti-recursion limit. Needs a repo secret only a human
+# can create - see README's "Continuous integration & releases" for how.
 #
-#   1. A real PR merges (any branch not named release/*) - this reads
-#      its label/title for a bump type, computes the next version from
-#      the latest vX.Y.Z tag, and opens + auto-merges a small
-#      "release/vX.Y.Z" PR that bumps extension/manifest.json's version
-#      and adds a CHANGELOG.md entry. That PR still has to pass CI's
-#      required "test" check like any other merge to main - typically
-#      well under a minute, and needs no human.
-#   2. THAT PR merges (recognized by its "release/" branch prefix) -
-#      this tags the now-current commit on main and publishes a GitHub
-#      Release, which is what actually triggers publish-thunderbird.yml.
-#
-# A PR with none of major/minor/bugfix on it (docs, CI tweaks, a
-# Dependabot bump) merges normally and cuts no release at all.
+# Deliberate tradeoff, not an oversight: this bump commit lands on main
+# BEFORE its own CI result is known (there's nothing left to gate it on
+# - no PR, no required check). Acceptable here because the commit is
+# entirely generated (a version string + a changelog entry, nothing
+# hand-written) and the actual feature/fix content it's releasing
+# already passed CI as its own separate, real PR.
 on:
   pull_request:
     types: [closed]
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release:
@@ -45,22 +51,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
+          # A real admin PAT, not the default GITHUB_TOKEN - see the
+          # comment above for why. persist-credentials keeps it as the
+          # remote's auth for the `git push` below.
+          token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Cut the tag + GitHub Release (hop 2 - a release/* bump PR just merged)
-        if: startsWith(github.event.pull_request.head.ref, 'release/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          version=$(jq -r .version extension/manifest.json)
-          tag="v${version}"
-          git tag -a "$tag" -m "$tag"
-          git push origin "$tag"
-          gh release create "$tag" \
-            --title "$tag" \
-            --notes "Released from #${{ github.event.pull_request.number }}. See CHANGELOG.md."
-
-      - name: Determine bump type (hop 1 - a real PR just merged)
-        if: ${{ !startsWith(github.event.pull_request.head.ref, 'release/') }}
+      - name: Determine bump type
         id: bump
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -97,18 +93,16 @@ jobs:
           esac
           echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
 
-      - name: Open and auto-merge the release bump PR
+      - name: Bump manifest.json + CHANGELOG.md, commit, tag, push to main
         if: steps.bump.outputs.type != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
           SOURCE_PR: ${{ github.event.pull_request.number }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          branch="release/v${VERSION}"
-          git checkout -b "$branch"
 
           python3 - <<'PYEOF'
           import json, os
@@ -137,8 +131,9 @@ jobs:
 
           git add extension/manifest.json CHANGELOG.md
           git commit -m "chore(release): v${VERSION}"
-          git push -u origin "$branch"
-          gh pr create --base main --head "$branch" \
-            --title "chore(release): v${VERSION}" \
-            --body "Automated ${BUMP_TYPE} bump to v${VERSION}, triggered by #${SOURCE_PR}. Merging this PR tags the release and publishes it to Thunderbird Add-ons."
-          gh pr merge --auto --squash "$branch"
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          git push origin main
+          git push origin "v${VERSION}"
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes "Released from #${SOURCE_PR} (${BUMP_TYPE}). See CHANGELOG.md."

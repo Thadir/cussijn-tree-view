@@ -166,14 +166,12 @@ DOM from here.
   Mark a PR with what it should bump: either a GitHub label - **`major`**,
   **`minor`**, or **`bugfix`** - or its title starting with
   `major:`/`minor:`/`bugfix:` (label wins if both are present). Merging
-  it computes the next `vX.Y.Z` from the latest tag and automatically
-  opens + auto-merges a small follow-up `release/vX.Y.Z` PR that bumps
-  `extension/manifest.json`'s `version` and adds a `CHANGELOG.md` entry -
-  no second manual click, that PR only has to pass the same required CI
-  check any merge to `main` does. **Merging THAT PR** is what tags the
-  repo and publishes a GitHub Release. A PR with none of
-  major/minor/bugfix on it (docs, CI tweaks, a Dependabot bump) merges
-  normally and cuts no release.
+  it computes the next `vX.Y.Z` from the latest tag and, in one commit
+  pushed straight to `main`, bumps `extension/manifest.json`'s `version`,
+  adds a `CHANGELOG.md` entry, tags the repo, and publishes a GitHub
+  Release. A PR with none of major/minor/bugfix on it (docs, CI tweaks, a
+  Dependabot bump) merges normally and cuts no release. This needs a repo
+  secret only you can create - see "Release automation" below.
 - **Publishing a GitHub Release** triggers
   `.github/workflows/publish-thunderbird.yml`, which builds the `.xpi`,
   attaches it to the release, and signs + submits it to
@@ -185,6 +183,25 @@ DOM from here.
   `build/Containerfile` - grouping each into one weekly PR. Those PRs
   auto-merge (squash) once CI passes, via
   `.github/workflows/dependabot-auto-merge.yml`.
+
+### Release automation
+
+`release.yml` pushes its version-bump commit straight to `main`,
+bypassing "require a pull request before merging" - which only works
+because it authenticates as a real admin user, not the default
+`GITHUB_TOKEN` (that token can't push to a protected branch at all, and
+even where it could, GitHub doesn't let `GITHUB_TOKEN`-driven pushes
+trigger further workflow runs - both were tried and hit live on this
+repo's actual first release, see the comment at the top of
+`release.yml`). You'll need to create this secret yourself - it's tied
+to your own GitHub identity, so it's not something this repo's pipeline
+can generate on its own:
+
+1. **Settings -> Developer settings -> Personal access tokens** (a
+   fine-grained token scoped to just this repo, with **Contents:
+   Read and write**, is enough).
+2. Add it to this repo as an Actions secret named `RELEASE_TOKEN`
+   (**Settings -> Secrets and variables -> Actions**).
 
 ### Publishing to Thunderbird Add-ons
 
@@ -198,13 +215,12 @@ that part for you:
 3. Add them to this repo as Actions secrets named `ATN_API_KEY` and
    `ATN_API_SECRET` (**Settings -> Secrets and variables -> Actions**).
 
-One caveat worth knowing before relying on this fully hands-off: this
-pipeline has not yet been exercised against a live ATN submission, so
-whether the very first submission of a brand-new listing goes through
-cleanly via the API, or needs one manual upload through ATN's web UI to
-create the listing first, hasn't been confirmed - if the automated
-`sign` step fails on the first release, try that first submission by
-hand and the automation should carry every release after that.
+Confirmed working end to end on this repo's actual v1.0.0 release: the
+`.xpi` uploaded, validated, and was auto-signed by ATN within a couple
+of minutes, with no manual step needed - the `web-ext` CLI's own
+"doesn't have signing enabled" warning during the upload turned out to
+just mean it doesn't wait around for that async result, not that
+signing itself didn't happen.
 
 ## Privacy
 

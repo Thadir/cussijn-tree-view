@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in Cussijn Tree View doesn't work the way it should.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what actually happened instead?
+      placeholder: >-
+        Right-clicked a folder in my Gmail account and chose "Open in Cussijn Tree View" -
+        it opened showing my IMAP account instead of Gmail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot (if it's something visual)
+      description: >-
+        Drag an image in here if the bug shows up on screen - a screenshot makes
+        treemap/color/layout issues much faster to diagnose than a description alone.
+    validations:
+      required: false
+
+  - type: input
+    id: thunderbird-version
+    attributes:
+      label: Thunderbird version
+      description: Help menu -> About Thunderbird
+      placeholder: "140.15.0 ESR"
+    validations:
+      required: true
+
+  - type: input
+    id: extension-version
+    attributes:
+      label: Cussijn Tree View version
+      description: Add-ons Manager (Ctrl+Shift+A) -> Cussijn Tree View
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: account-type
+    attributes:
+      label: Account type this happened on
+      multiple: true
+      options:
+        - IMAP
+        - Gmail (via IMAP)
+        - POP3
+        - Local Folders
+        - Other / not sure
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: false

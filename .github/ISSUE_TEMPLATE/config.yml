@@ -1,0 +1,5 @@
+# Keeps the plain "Open a blank issue" option alongside the bug/feature
+# forms below - not every issue (a docs fix, a question, general
+# feedback) fits either structured template, and there's no Discussions
+# tab enabled on this repo to redirect those to instead.
+blank_issues_enabled: true

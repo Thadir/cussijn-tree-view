@@ -243,4 +243,6 @@ itself.
   workflow, the Thunderbird Add-ons publish workflow, and Dependabot
   auto-merge.
 - `.github/dependabot.yml` - config for Dependabot grouping.
+- `.github/ISSUE_TEMPLATE/` - structured bug report / feature request
+  forms; blank issues stay allowed too for anything that fits neither.
 - `CHANGELOG.md` - appended to automatically by `release.yml`.

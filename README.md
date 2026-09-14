@@ -161,17 +161,19 @@ DOM from here.
 - **CI** (`.github/workflows/ci.yml`) builds and unit-tests every push to
   `main` and every pull request, the same `build/build.sh` steps
   `./build/run.sh` runs locally.
-- **Versioning is automated** via
-  [release-please](https://github.com/googleapis/release-please): commits
-  on `main` following [Conventional
-  Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, a `!`
-  or `BREAKING CHANGE:` footer for a major bump) keep one open "release
-  PR" up to date with the next version and a generated `CHANGELOG.md`.
-  Merging a normal PR into `main` does **not** itself cut a release - it
-  only updates that release PR. Merging the **release PR** is what tags
-  the repo, bumps `extension/manifest.json`'s `version`, and publishes a
-  GitHub Release - a deliberate manual checkpoint before anything reaches
-  the add-on store, not a fully unattended pipeline.
+- **Versioning is automated via `.github/workflows/release.yml`** - no
+  Conventional Commits vocabulary anywhere in this repo's own process.
+  Mark a PR with what it should bump: either a GitHub label - **`major`**,
+  **`minor`**, or **`bugfix`** - or its title starting with
+  `major:`/`minor:`/`bugfix:` (label wins if both are present). Merging
+  it computes the next `vX.Y.Z` from the latest tag and automatically
+  opens + auto-merges a small follow-up `release/vX.Y.Z` PR that bumps
+  `extension/manifest.json`'s `version` and adds a `CHANGELOG.md` entry -
+  no second manual click, that PR only has to pass the same required CI
+  check any merge to `main` does. **Merging THAT PR** is what tags the
+  repo and publishes a GitHub Release. A PR with none of
+  major/minor/bugfix on it (docs, CI tweaks, a Dependabot bump) merges
+  normally and cuts no release.
 - **Publishing a GitHub Release** triggers
   `.github/workflows/publish-thunderbird.yml`, which builds the `.xpi`,
   attaches it to the release, and signs + submits it to
@@ -237,8 +239,8 @@ itself.
 - `build/` - the podman build/lint/test/package pipeline.
 - `e2e/` - the podman Robot Framework smoke suite against a real
   headless Thunderbird over Marionette (`./e2e/run.sh`).
-- `.github/workflows/` - CI, the release-please automated-versioning
+- `.github/workflows/` - CI, the `major`/`minor`/`bugfix` release
   workflow, the Thunderbird Add-ons publish workflow, and Dependabot
   auto-merge.
-- `.github/dependabot.yml`, `release-please-config.json`,
-  `.release-please-manifest.json` - config for the above.
+- `.github/dependabot.yml` - config for Dependabot grouping.
+- `CHANGELOG.md` - appended to automatically by `release.yml`.

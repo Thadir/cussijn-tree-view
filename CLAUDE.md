@@ -276,28 +276,44 @@ e2e/                  podman-based Robot Framework smoke suite against a
   native auto-merge on them the moment they're opened, which only
   actually merges once `test` passes - it doesn't bypass CI, it just
   removes the need to click merge by hand.
-- **Versioning is release-please, not a hand-written release workflow.**
-  `release-please-config.json` / `.release-please-manifest.json`
-  configure it to track version `"."` (this whole repo as one package,
-  `release-type: simple` since there's no `package.json` to manage) and
-  to also patch `extension/manifest.json`'s own `"version"` field via
-  `extra-files` - so the manifest and the git tag never drift apart.
-  Conventional Commit prefixes on `main` (`feat:`/`fix:`/a `!` or
-  `BREAKING CHANGE:` footer) drive the computed bump; a commit footer
-  `Release-As: x.y.z` overrides that computed bump outright - used once,
-  deliberately, on this repo's first real commit to force 0.0.0 -> 1.0.0
-  rather than whatever a `feat!:` on a from-scratch repo would compute on
-  its own.
-- **Merging a feature PR into `main` does not cut a release by itself -
-  it only updates release-please's own standing "release PR."** That PR
-  (title like "chore: release 1.0.0", bot-authored, holding the
-  CHANGELOG + manifest version bump for whatever's accumulated on `main`
-  since the last tag) is a deliberate manual checkpoint, not
-  auto-merged - don't wire it into the Dependabot auto-merge job or add
-  a second workflow that merges it automatically; publishing to a public
-  add-on store on every stray commit is exactly what that checkpoint is
-  for. Merging IT is what actually tags the repo and publishes a GitHub
-  Release.
+- **Versioning is `.github/workflows/release.yml`, deliberately NOT
+  release-please/semantic-release/Conventional Commits.** An earlier
+  version of this pipeline used release-please; it was ripped out
+  because its whole engine is hard-wired to `feat`/`fix`/`!` vocabulary
+  with no config knob to just relabel those keywords, and this project
+  wants literal `major`/`minor`/`bugfix` instead. That word now appears
+  in exactly one of two places on a PR - a GitHub label (`major`,
+  `minor`, or `bugfix`; checked first) or the PR title starting with
+  `major:`/`minor:`/`bugfix:` (fallback; `patch:` also reads as
+  `bugfix`) - never a commit-message type prefix. Don't reintroduce
+  `feat:`/`fix:`/`BREAKING CHANGE:` parsing here; a PR with neither
+  signal present merges normally and cuts no release at all, which is
+  the correct behavior for docs/CI/Dependabot PRs, not a bug to fix by
+  making one of major/minor/bugfix the silent default.
+- **Merging a real PR does not cut a release by itself - it triggers a
+  SECOND, fully automatic hop through the same workflow.** `release.yml`
+  runs on every `pull_request: closed` into `main` and tells the two
+  hops apart by the merged branch's name:
+  1. A real PR merges (any branch not starting `release/`) - reads its
+     label/title for a bump type, computes the next `vX.Y.Z` from the
+     latest git tag, and opens + immediately auto-merges a
+     `release/vX.Y.Z` PR bumping `extension/manifest.json`'s `version`
+     and prepending a `CHANGELOG.md` entry.
+  2. That `release/*` PR merges - THIS is what tags the repo and
+     publishes a GitHub Release. Recognized purely by branch name
+     (`startsWith(..., 'release/')`), not by anything in its title/label,
+     so don't rename that branch prefix without updating both `if:`
+     conditions in `release.yml` together.
+  This two-hop shape exists only because main's branch protection
+  ("require a pull request before merging") blocks even this workflow's
+  own `GITHUB_TOKEN` from pushing the version-bump commit straight to
+  `main` - from a human's perspective it's still one merge, since hop 2
+  is fully automatic (auto-merge waiting on the same required `test`
+  check every other PR waits on, no manual click) unlike release-please's
+  old deliberately-manual "release PR" checkpoint. Don't add a manual
+  approval gate back onto the `release/*` PR "for safety" without
+  flagging that as a deliberate scope change - the whole point of this
+  redesign was removing the second click.
 - **A published GitHub Release is what triggers
   `.github/workflows/publish-thunderbird.yml`** (`on: release:
   types: [published]`, not `on: push: tags`) - it rebuilds the `.xpi`

@@ -88,6 +88,22 @@ e2e/                  podman-based Robot Framework smoke suite against a
 
 ## Conventions
 
+- **`manifest.json`'s `applications.gecko.id` is
+  `cussijn-tree-view@thadir.net` - PERMANENT, never bump it per
+  release.** This is the add-on's actual identity to Thunderbird/ATN -
+  what makes a new `.xpi` register as "a new version of the same
+  add-on" instead of an unrelated one - NOT something that tracks the
+  version number, which already lives in `manifest.json`'s separate
+  `"version"` field and is what the release pipeline (`release.yml`)
+  actually bumps every release. Originally shipped as the placeholder
+  `cussijn-tree-view@local` for v1.0.0/v1.0.1; changed once, deliberately,
+  to a permanent domain-based id before the add-on had real users -
+  that's the only cheap time to do it, since changing it again would
+  orphan the current ATN listing (a new id is a brand-new listing to
+  ATN, Description/Homepage and all) and break auto-update for anyone
+  who already installed it. Don't ever suggest bumping this per-version
+  "to match" the version number - that idea was raised once and
+  corrected before it shipped; the version field already does that job.
 - **No dispatch table.** `cussijn.js` calls
   `messenger.accounts`/`messenger.messages` directly instead of relaying
   through `background.js`. A dispatch table (a single choke point that

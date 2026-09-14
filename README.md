@@ -214,6 +214,17 @@ of minutes, with no manual step needed - the `web-ext` CLI's own
 just mean it doesn't wait around for that async result, not that
 signing itself didn't happen.
 
+**One required one-time step, confirmed by a real failure on v1.0.1**:
+ATN accepted a brand-new listing's first version via the API with no
+complaints, but rejected the second with `You cannot add a listed
+version to this addon via the API due to missing metadata. Please
+submit via the website`. Before your second release, fill in the
+add-on's **Description** on the ATN Developer Hub yourself (your
+listing's page -> Add-on Details -> Edit) - this is addon-level
+metadata, not something any manifest key or API call sets, so the
+pipeline can't do it for you. One-time only; every release after that
+should go through automatically.
+
 ## Privacy
 
 This extension collects and transmits nothing. It calls only local

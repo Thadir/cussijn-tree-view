@@ -100,16 +100,41 @@ favor of a GUI-in-a-container + image/accessibility-based approach (e.g.
 design discussion considered and set aside in favor of trying Marionette
 first.
 
-## No mail fixture data (yet)
+## Mail fixture data
 
-The smoke suite runs against a fresh, empty profile - there's no
-configured mail account, so nothing meaningful is asserted about what
+The smoke suite (CI) still runs against a fresh, empty profile - there's
+no configured mail account, so nothing meaningful is asserted about what
 the treemap actually renders (that's exactly what the DOM-access gap
-above blocks anyway). A real content-level test suite would need a
-seeded profile - Thunderbird's "Local Folders" account can read
-pre-written mbox files directly with no server involved, which is the
-likely path - but building that out isn't worth doing before the
-DOM-access gap above is solved; there'd be nothing to assert against it.
+above blocks anyway; a content-level assertion suite would need this
+fixture too, but there'd be nothing to assert against it until that gap
+is solved).
+
+But seeded mail data itself now exists:
+`e2e/fixtures/generate_fixture.py` writes a throwaway profile's
+`prefs.js` (a "Local Folders" account - Thunderbird's own local
+mbox-backed account type, no server involved) plus a
+`Mail/Local Folders/Inbox` mbox file of entirely synthetic messages -
+fake senders, fake subjects, `*.test` domains (IANA-reserved for exactly
+this, [RFC 2606](https://www.rfc-editor.org/rfc/rfc2606)) - nothing
+derived from any real mailbox. Two things had to be found live before
+this worked at all:
+
+- A raw mbox file dropped into a fresh profile is **not** auto-indexed
+  by Thunderbird on startup - `CussijnLibrary.index_local_inbox()` has
+  to force it via `nsIMsgLocalMailFolder.parseFolder()` (chrome-only
+  XPCOM, unreachable through any `messenger.*` WebExtension API).
+- Thunderbird's five default tag keys (`$label1`-`$label5` ->
+  Important/Work/Personal/To Do/Later) are built in and don't need
+  declaring in `prefs.js` at all.
+
+`e2e/robot/screenshot.robot` (run via `./e2e/screenshot.sh`, **not**
+part of `./e2e/run.sh` or CI - there's no reason to regenerate an
+identical image on every push) uses this fixture to produce
+`docs/screenshot.png` for the README: seeds the fixture, opens the real
+extension against it in a real headless Thunderbird, and saves a full
+window screenshot (`Marionette.screenshot()` - a WebDriver-level
+capability that works at the browser-window level and, unlike
+content-DOM access, doesn't run into the gap above at all).
 
 ## CI
 

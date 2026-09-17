@@ -1,5 +1,7 @@
 # Cussijn Tree View
 
+![line coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Thadir/cussijn-tree-view/badges/coverage-badge.json)
+
 A [SequoiaView](https://en.wikipedia.org/wiki/SequoiaView)-style treemap
 of your mailbox: each folder is a rectangle sized by message count (or
 size), colored by whichever mail tag is most common in it. Hover a
@@ -18,6 +20,13 @@ host, no companion process required. It only reads mail headers and
 tags via Thunderbird's own `messenger.accounts`/`messenger.messages`
 APIs and never opens a network connection.
 
+![Cussijn Tree View grouped by tag, showing a real treemap in a real Thunderbird](docs/screenshot.png)
+
+A real screenshot, not a mockup: captured from the actual extension
+running in a real, headless Thunderbird against entirely synthetic mail
+(fake senders, `*.test` domains) - see `e2e/screenshot.sh` /
+`e2e/README.md`'s "Mail fixture data" for how it's generated.
+
 ## Install
 
 There's no native-messaging host to set up - just the add-on itself:
@@ -25,14 +34,11 @@ There's no native-messaging host to set up - just the add-on itself:
 1. Build (or download) `cussijn-tree-view.xpi` - see "Build & test" below.
 2. In Thunderbird: **Menu -> Add-ons and Themes** (Ctrl+Shift+A) -> gear
    icon -> **Install Add-on From File...** -> pick the `.xpi`.
-3. The new **Cussijn Tree View** button appears in the toolbar (customize
-   the toolbar to add it if it isn't visible yet).
 
 ## Opening it
 
-Four ways in, all landing on the same view:
+Three ways in, all landing on the same view:
 
-- **The toolbar button.**
 - **A keyboard shortcut** - `Ctrl+Shift+Y` by default, remappable in
   Add-ons Manager's gear menu -> **Manage Extension Shortcuts**.
 - **Tools menu -> "Cussijn Tree View."**
@@ -55,13 +61,16 @@ three.)
 - **Group by** switches what determines a rectangle's *color* -
   **Tag**, **Sender domain** (each domain gets its own automatically
   and stably assigned color, not re-randomized every time you open it),
-  or **To / Cc / Bcc** (how you personally were addressed on each
-  message, using your account's own identity addresses).
+  **To / Cc / Bcc** (how you personally were addressed on each message,
+  using your account's own identity addresses), or **Year** (drills one
+  extra level into **Month** before continuing to sender).
 - **Filter**: tag chips are OR'd together (pick several tags, match
   any of them); the address box matches a domain or address anywhere
   in From, To, Cc, or Bcc - so filtering by `paypal.com` catches it
-  whether PayPal is the sender or just Cc'd. A tag selection and an
-  address filter combine with AND. **Clear** resets both.
+  whether PayPal is the sender or just Cc'd; **Hide sent by me** drops
+  your own replies (useful on Gmail, where "All Mail" includes sent
+  mail by IMAP definition, not just what you received). All active
+  filters combine with AND. **Clear** resets them all.
 - **Hover** a rectangle for its exact message count, size, and a
   breakdown of whichever dimension is currently grouping the view (or,
   for a single email, its sender/date/size).
@@ -91,22 +100,26 @@ three.)
      featureless "(N more)" block; click into a sender to see its
      messages instead.
 
-  A cell with its own nested children skips its own label (real
-  SequoiaView doesn't label intermediate levels either - hover it for
-  its name); only the deepest cells shown get a text label. A very
-  large group (hundreds of senders or domains) folds its smallest
-  entries into one "(N more)" cell rather than drawing hundreds of
-  slivers - individual messages fold much sooner than other dimensions,
-  since a wall of same-size message tiles adds little past the first
-  few dozen.
+  A cell with its own nested children keeps a slim header labeling
+  itself (with its own `▸` mark - clicking it still drills into just
+  that one node) rather than the normal bottom label; a cell that looks
+  flat but could still be drilled further (Depth too low, too small, or
+  its color happens to match its next level's dominant one) gets the
+  same `▸` mark near its own corner as a hint. A very large group
+  (hundreds of senders or domains) folds its smallest entries into one
+  "(N more)" cell rather than drawing hundreds of slivers - individual
+  messages fold much sooner than other dimensions, since a wall of
+  same-size message tiles adds little past the first few dozen. "Max"
+  jumps Depth straight to its highest useful value in one click.
 
   **Click** any cell, at any depth, to drill the *whole view* one step
   further in - starting from that cell instead of "All folders," and
   nesting up to `Depth` levels below IT. The breadcrumb at the top shows
   the real path you've drilled - actual folder names first, then the
   content breakdown - and lets you climb back to any level; switching
-  account, filters, or Group by starts back over at the folder level
-  (Depth itself doesn't reset - it's independent of where you are).
+  account or filters starts back over at the folder level, but
+  switching Group by doesn't - it just recolors/regroups whatever
+  you're already looking at (Depth doesn't reset either way).
 - **Right-click any rectangle** (or the small circular button that
   appears on hovering one) to open a real Thunderbird tab filtered down
   to exactly what that rectangle represents - a live quick filter
@@ -119,10 +132,13 @@ three.)
 - **Refresh** re-reads the current account; the account picker switches
   between your configured Thunderbird accounts.
 
-One honest limitation: Thunderbird's own quick filter has no CC-only
-match, only a combined "recipients" (To+Cc+Bcc) - so the address filter
-and the "jump to search" it opens can't isolate CC specifically from To
-or Bcc.
+Two honest limitations, both because Thunderbird's own quick filter API
+just doesn't have the matching facet: it has no CC-only match, only a
+combined "recipients" (To+Cc+Bcc), so the address filter and the "jump
+to search" it opens can't isolate CC specifically from To or Bcc; and
+it has no date/age match, so jumping to search from a Year, Month, or
+To/Cc/Bcc cell (or with "Hide sent by me" active) can't narrow the
+search beyond whatever tag/address filter is already active.
 
 ## Build & test
 
@@ -138,6 +154,19 @@ testing (the real folder-tree drill-down, tag/domain aggregation,
 recursive content-dimension grouping down to individual messages, the
 squarified treemap layout - see `extension/cussijn.test.js`), then
 packages `extension/` into `dist/cussijn-tree-view.xpi`.
+
+**On that coverage badge**: it's generated by CI (`.github/workflows/ci.yml`,
+`node --test --experimental-test-coverage`) on every push to `main` and
+published to a separate, unprotected `badges` branch as a small JSON
+file the badge itself reads live - no manual refreshing, it can't go
+stale. It does need context to not be misread, though: it's whole-file
+line coverage of `cussijn.js`, which mixes the pure logic above (fully
+covered) with `initUi()`'s DOM wiring and the real `messenger.*` calls,
+deliberately **not** unit-tested - they need a live Thunderbird to
+exercise meaningfully, which is what `e2e/` is for instead (see
+"End-to-end testing" below). That untested-by-design block is most of
+what drags the line-coverage number down; it isn't a gap in the
+pure-logic tests themselves.
 
 ### End-to-end testing against a real Thunderbird
 
@@ -214,6 +243,17 @@ of minutes, with no manual step needed - the `web-ext` CLI's own
 just mean it doesn't wait around for that async result, not that
 signing itself didn't happen.
 
+**One required one-time step, confirmed by a real failure on v1.0.1**:
+ATN accepted a brand-new listing's first version via the API with no
+complaints, but rejected the second with `You cannot add a listed
+version to this addon via the API due to missing metadata. Please
+submit via the website`. Before your second release, fill in the
+add-on's **Description** on the ATN Developer Hub yourself (your
+listing's page -> Add-on Details -> Edit) - this is addon-level
+metadata, not something any manifest key or API call sets, so the
+pipeline can't do it for you. One-time only; every release after that
+should go through automatically.
+
 ## Privacy
 
 This extension collects and transmits nothing. It calls only local
@@ -225,14 +265,16 @@ itself.
 ## Files
 
 - `extension/manifest.json` - permissions (`accountsRead`,
-  `accountsFolders`, `messagesRead`, `messagesTags`, `menus` - all
-  read-only or UI-only, no `compose`/`messagesMove`/`messagesDelete`/
-  `messagesUpdate` needed since this never changes anything) and the
-  `commands` keyboard shortcut declaration.
-- `extension/background.js` - tiny: owns the toolbar button, the
-  keyboard shortcut, the Tools-menu entry, and the folder-pane context
-  menu entry, all four opening/focusing the same Cussijn Tree View tab.
-  No dispatch table - see `CLAUDE.md` for why.
+  `accountsFolders`, `messagesRead`, `messagesTags`, `menus`, `storage` -
+  all read-only, UI-only, or local-only, no `compose`/`messagesMove`/
+  `messagesDelete`/`messagesUpdate` needed since this never changes
+  anything; `storage` is `browser.storage.local` for a local per-account
+  cache, nothing leaves the machine) and the `commands` keyboard
+  shortcut declaration.
+- `extension/background.js` - tiny: owns the keyboard shortcut, the
+  Tools-menu entry, and the folder-pane context menu entry, all three
+  opening/focusing the same Cussijn Tree View tab. No dispatch table -
+  see `CLAUDE.md` for why.
 - `extension/cussijn.html` / `cussijn.js` - the treemap itself: data
   loading, the real folder-tree drill-down, the squarified layout
   algorithm, rendering, hover.
@@ -246,7 +288,12 @@ itself.
   configure).
 - `build/` - the podman build/lint/test/package pipeline.
 - `e2e/` - the podman Robot Framework smoke suite against a real
-  headless Thunderbird over Marionette (`./e2e/run.sh`).
+  headless Thunderbird over Marionette (`./e2e/run.sh`), synthetic mail
+  fixture generation, and the README screenshot generator
+  (`./e2e/screenshot.sh`).
+- `docs/screenshot.png` - the README's screenshot, generated by
+  `./e2e/screenshot.sh` - not hand-authored, regenerate it rather than
+  editing it directly if it ever needs to change.
 - `.github/workflows/` - CI, the `major`/`minor`/`bugfix` release
   workflow, the Thunderbird Add-ons publish workflow, and Dependabot
   auto-merge.

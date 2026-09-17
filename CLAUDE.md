@@ -27,13 +27,13 @@ extension/
   manifest.json      permissions (accountsRead, accountsFolders,
                       messagesRead, messagesTags - all read-only; menus -
                       for the folder-pane and Tools menu entries) and
-                      the browser_action/commands/options_ui declarations
-  background.js       tiny: owns the toolbar button, a keyboard shortcut
-                      (commands), a Tools-menu entry, and a folder-pane
-                      context menu entry - all four open/focus the same
-                      Cussijn Tree View tab via one openOrFocusView()
-                      function. No dispatch table, no message relay -
-                      see "Conventions" below for why.
+                      the commands/options_ui declarations
+  background.js       tiny: owns a keyboard shortcut (commands), a
+                      Tools-menu entry, and a folder-pane context menu
+                      entry - all three open/focus the same Cussijn Tree
+                      View tab via one openOrFocusView() function. No
+                      dispatch table, no message relay - see
+                      "Conventions" below for why.
   cussijn.html/.js    the treemap: reads mail directly via
                       messenger.accounts.list(true) (which also returns
                       each account's real rootFolder.subFolders tree,
@@ -45,37 +45,54 @@ extension/
                            see "Drill-down mirrors the real folder tree
                            first" below.
                         2. Within a leaf folder, groupMessages() further
-                           aggregates by whichever of THREE precomputed
+                           aggregates by whichever of FOUR precomputed
                            content dimensions (tag, sender domain,
-                           To/Cc/Bcc address type - see groupFor()) is
-                           active, then by sender, then by individual
-                           message (the actual bottom of this data).
+                           To/Cc/Bcc address type, year - see groupFor())
+                           is active, then (year only) by month, then by
+                           sender, then by individual message (the actual
+                           bottom of this data).
                       Lays out a squarified treemap (Bruls/Huizing/van
                       Wijk algorithm), renders with hover + recursive
                       drill-down (a "Depth" control shows several of
                       those levels nested at once - see layoutTree() -
                       rather than forcing one click per level) + a
-                      filter bar, and opens a real Thunderbird search
-                      view via
+                      filter bar (tag/address/"Hide sent by me"), and
+                      opens a real Thunderbird search view via
                       messenger.mailTabs.create/update +
                       .setQuickFilter() ("jump to search"). Also reads
                       an optional ?folder=<id> query param (set by the
                       folder-pane context menu entry) to open already
-                      drilled all the way down to one real folder.
+                      drilled all the way down to one real folder, and
+                      caches the last fetched messages/tags per account
+                      in browser.storage.local (stale-while-revalidate -
+                      see "Conventions" below) so reopening the view
+                      shows something instantly instead of waiting on a
+                      full re-fetch.
   cussijn.test.js     Node-run unit tests for the pure-logic pieces
                       (buildFolderTree, findFolderPath, computeBreakdowns,
                       groupFor, groupMessages, nextDimension, colorForKey,
                       jumpFilterFor, squarify, applyFilters,
                       buildQuickFilterProps, classifyAddressType,
-                      hashColor) - the DOM wiring and the real
-                      messenger.* calls are not unit-tested: they need a
-                      live Thunderbird to exercise meaningfully, and this
-                      dev environment doesn't have one (see "Known gaps").
+                      isSentByMe, messageYear, messageSignature,
+                      cacheKeyFor, hashColor) - the DOM wiring and the
+                      real messenger.* calls are not unit-tested: they
+                      need a live Thunderbird to exercise meaningfully,
+                      and this dev environment doesn't have one (see
+                      "Known gaps").
   options.html        a short about page - there's nothing to configure.
 
 build/                podman-based lint/test/package pipeline (Containerfile,
                       build.sh, run.sh) - `./build/run.sh`, no Node needed
-                      on the host at all.
+                      on the host at all. `local-build.sh` is a fallback
+                      for a dev environment where rootless podman can't
+                      run (this sandbox) - same lint/test, but packages
+                      with python3's zipfile and stamps the packaged
+                      manifest.json's version with a build timestamp
+                      (`1.0.1.202609161930`, say) so Thunderbird always
+                      treats a fresh local build as newer than the last
+                      one; the checked-in manifest.json's version is
+                      never touched. Also copies the result to Thadir's
+                      SequoiaView folder (see "Where things run").
 e2e/                  podman-based Robot Framework smoke suite against a
                       REAL headless Thunderbird over Marionette (not
                       Firefox - see e2e/README.md for why that's a category
@@ -84,10 +101,28 @@ e2e/                  podman-based Robot Framework smoke suite against a
                       does NOT yet reach into the page's own DOM - see
                       e2e/README.md's "Known limitation" before assuming
                       otherwise or trying to add a content-level assertion.
+                      fixtures/generate_fixture.py generates a throwaway
+                      profile's synthetic (fake senders, *.test domains)
+                      Local Folders mail; robot/screenshot.robot
+                      (`./e2e/screenshot.sh`, on-demand only, not CI)
+                      uses it to produce docs/screenshot.png for the
+                      README.
 ```
 
 ## Conventions
 
+- **`manifest.json`'s `applications.gecko.id` is
+  `cussijn-tree-view@thadir.net` - PERMANENT, never bump it per
+  release.** This is the add-on's actual identity to Thunderbird/ATN -
+  what makes a new `.xpi` register as "a new version of the same
+  add-on" instead of an unrelated one - NOT something that tracks the
+  version number, which already lives in `manifest.json`'s separate
+  `"version"` field and is what the release pipeline (`release.yml`)
+  actually bumps every release. Changing it orphans the current ATN
+  listing (a new id is a brand-new listing to ATN, Description/Homepage
+  and all) and breaks auto-update for anyone who already installed it.
+  Don't ever suggest bumping this per-version "to match" the version
+  number - the version field already does that job.
 - **No dispatch table.** `cussijn.js` calls
   `messenger.accounts`/`messenger.messages` directly instead of relaying
   through `background.js`. A dispatch table (a single choke point that
@@ -104,17 +139,20 @@ e2e/                  podman-based Robot Framework smoke suite against a
   page behaves anyway. Revisit MV3 if there's a reason to (e.g. wanting
   to publish under a manifest version Mozilla is pushing harder).
 - Read-only-or-UI-only permissions (`accountsRead`, `accountsFolders`,
-  `messagesRead`, `messagesTags`, `menus`) - this extension never calls
-  `messages.update`/`.move`/`.delete` or anything under `compose`. Keep
-  it that way; if a future feature needs a write permission, that's a
+  `messagesRead`, `messagesTags`, `menus`, `storage`) - this extension
+  never calls `messages.update`/`.move`/`.delete` or anything under
+  `compose`. `storage` is `browser.storage.local` only, used for the
+  per-account message/tag cache (see "Conventions" below) - still
+  entirely local to the machine, nothing leaves it. Keep the no-mail-write
+  rule; if a future feature needs a write permission, that's a
   meaningfully bigger scope change than this project started with and
   deserves being flagged as such, not added quietly.
 - **There is no supported way for a WebExtension to add an item to
   Thunderbird's native "View" application menu** - checked against
   webextension-api.thunderbird.net's `menus` docs before assuming
   otherwise; its `contexts` list has `tools_menu` (the Tools menu) but
-  nothing for View. The real entry points the platform offers beyond a
-  toolbar button are a keyboard shortcut (the `commands` manifest key +
+  nothing for View. The real entry points this extension uses are a
+  keyboard shortcut (the `commands` manifest key +
   `messenger.commands.onCommand`, namespaced under `messenger.*`, not
   `browser.*`), a Tools-menu item (`messenger.menus`, `contexts:
   ["tools_menu"]`), and a folder-pane context menu entry
@@ -127,6 +165,9 @@ e2e/                  podman-based Robot Framework smoke suite against a
   codebase before (see the `accounts.list()` boolean note further down)
   and Thunderbird's API has clearly drifted from whatever a
   half-remembered shape assumes.
+- **No `browser_action` toolbar button.** It can't reliably resolve the
+  right account/folder from a background script's tab-focus state. Don't
+  add one without first confirming, live, that it can.
 - `messenger.menus.create()` is called unconditionally at the top of
   `background.js` (not guarded by an installed/first-run check) because
   this is a non-persistent event page that can't reliably track "have I
@@ -140,13 +181,27 @@ e2e/                  podman-based Robot Framework smoke suite against a
   whatever dominant tags are actually present, not a fixed category ->
   color table - there's no fixed category list to hardcode against.
 - **The coloring/grouping dimension is switchable and independent of
-  filtering.** Filters (tag OR-selection, address-text search) narrow
-  *which messages* are counted at all; "Group by" (tag / sender domain /
-  address type) only changes what a rectangle's *color* represents.
-  `computeBreakdowns()` computes all three dimensions' breakdowns up
-  front so switching modes is a re-render, not a re-fetch - keep that
-  property if adding a fourth dimension, rather than re-aggregating per
-  mode switch.
+  filtering.** Filters (tag OR-selection, address-text search, "Hide
+  sent by me") narrow *which messages* are counted at all; "Group by"
+  (tag / sender domain / address type / year) only changes what a
+  rectangle's *color* represents. `computeBreakdowns()` computes all
+  four dimensions' breakdowns up front so switching modes is a
+  re-render, not a re-fetch - keep that property if adding a fifth
+  dimension, rather than re-aggregating per mode switch. Year, month,
+  and address-type all have no matching `mailTabs.setQuickFilter()`
+  facet (`NO_SEARCH_FACET` in cussijn.js) - no date/age or Cc-only
+  match exists in that API - so jumping to search from one of those
+  can't narrow past the folder's own current filters. The go-btn's
+  tooltip says so directly for those three rather than silently
+  opening the whole folder unfiltered and looking broken.
+- **"Hide sent by me" (`isSentByMe()`/`applyFilters()`'s `hideSentByMe`)
+  is a filter, not a Group-by mode** - it drops any message whose
+  author is one of the account's own identities. Exists because Gmail's
+  "All Mail" is, by IMAP definition, every message including your own
+  sent replies - there's no folder-level way to see received-only mail
+  there the way Inbox already gives you for free. Doesn't propagate to
+  `mailTabs.setQuickFilter()` either (no such facet), same limitation
+  as the dimensions above.
 - **The default Group-by mode is picked per account, not hardcoded to
   "tag."** Found live: a Gmail account (via IMAP) had zero
   Thunderbird-tagged messages, so Group-by: Tag colored literally every
@@ -191,17 +246,16 @@ e2e/                  podman-based Robot Framework smoke suite against a
   `messenger.accounts.list(true)`'s `identities`, which are always
   present on every `MailAccount` regardless of that boolean - the
   boolean actually controls whether `rootFolder.subFolders` gets
-  populated (see the next bullet); don't conflate the two, an earlier
-  version of this file's comments did. A message doesn't state directly
+  populated (see the next bullet); don't conflate the two. A message doesn't state directly
   "was this addressed to me" - it carries To/Cc/Bcc address lists, which
   `classifyAddressType` compares against those identities.
 - **Drill-down mirrors the real folder tree first, then falls back to
   content grouping.** `buildFolderTree()` walks
   `account.rootFolder.subFolders` (nested, from `accounts.list(true)`)
   and buckets the already-fetched messages by their real `folder.id` -
-  it does NOT build one node per distinct full path the way an earlier
-  version of this file did, which showed a folder and its own subfolder
-  as unrelated flat siblings instead of parent and child. A node's
+  it does NOT build one node per distinct full path - that would show a
+  folder and its own subfolder as unrelated flat siblings instead of
+  parent and child. A node's
   `messages`/`count`/`size_mb`/breakdowns are the recursive union of its
   own direct messages plus every descendant's, mirroring how a real
   disk-usage view treats a directory's size as including its
@@ -225,7 +279,7 @@ e2e/                  podman-based Robot Framework smoke suite against a
   folder-tree ones and the content-dimension ones) keeps its own
   `messages` array specifically so the next click can regroup that real
   subset - don't special-case one more hardcoded level (e.g. "top 8
-  senders", which an even earlier version of this file did) - fold a new
+  senders") - fold a new
   grouping dimension into `groupKeyFor()`/`colorForKey()`/
   `jumpFilterFor()` instead, and it drills like the others for free.
   `nextDimension()`'s content chain runs Group-by dimension -> sender ->
@@ -236,7 +290,15 @@ e2e/                  podman-based Robot Framework smoke suite against a
   *label* is its subject (unique per cell, that's the point) but its
   *color* comes from its own sender via `hashColor()` instead (a unique
   id would hash to a meaningless color; the sender at least visually
-  clusters one person's mail even at the finest level).
+  clusters one person's mail even at the finest level). "year" gets one
+  extra hop before that chain resumes: `"year" -> "month" -> sender ->
+  message`, requested by the user - a year alone is coarse. Month is a
+  bounded set of exactly 12, so it colors like `addressType` (a fixed
+  `PALETTE_ORDER` slot per value) rather than `hashColor()`. `layoutTree()`
+  also never lets a month-level cell auto-expand into sender/message via
+  Depth (same treatment as sender never auto-expanding into message,
+  just below) - a further breakdown within one month is still a click
+  away.
 - **A `MailFolderId` is `"<accountId>://<path>"` - confirmed live** (e.g.
   `account4://INBOX`, from an actual right-click in a real multi-account
   profile), not assumed from docs. This matters because
@@ -272,24 +334,37 @@ e2e/                  podman-based Robot Framework smoke suite against a
   this node" logic pulled out into its own function specifically so
   `layoutTree()` can call the SAME logic to expand a cell's children
   INLINE (nested inside its own rectangle, still in the outer
-  container's coordinate space - see the comment on `layoutTree()`) when
-  the user's chosen "Depth" allows more than one level to be visible at
-  once. A cell whose children are drawn inline this render skips its own
-  label/go-btn (they'd render underneath those children) - real
-  SequoiaView doesn't label intermediate levels of its nested view
-  either, relying on hover for identification; only the deepest cells
-  actually shown keep their label. Depth changes only re-render already-
-  loaded data (no re-fetch) and is independent of `stack`/breadcrumb
-  navigation - clicking a cell still drills the whole view forward by
-  one step (to whatever is inside THAT cell), it just starts from a
-  richer nested picture each time rather than a flat one. **Exception:
-  `layoutTree()` never lets a sender-level cell auto-expand into
-  individual messages, no matter how high Depth is** - found live: every
-  message has count 1, so inline-expanding a real sender's messages
-  produced one giant near-blank `groupMessages()` overflow cell (most of
-  the screen) plus a wall of same-size tiles, not a useful picture.
-  Message-level detail stays reachable, just only via an explicit click
-  (`drillInto()`) - don't remove that guard to "simplify" `canExpand`.
+  container's coordinate space) when the user's chosen "Depth" allows
+  more than one level to be visible at once. Depth changes only
+  re-render already-loaded data (no re-fetch) and is independent of
+  `stack`/breadcrumb navigation - clicking a cell still drills the whole
+  view forward by one step, it just starts from a richer nested picture
+  each time rather than a flat one. `MAX_DEPTH` (6) is what the "Max"
+  button jumps straight to in one click.
+  A container (a cell whose children are drawn inline) keeps a slim
+  `cell-header` labeling ITSELF instead of the normal bottom
+  label/go-btn - with several containers expanded at once (several
+  years, each showing its own months), there'd otherwise be no way to
+  tell which cluster of children belongs to which container. The header
+  has its own `▸` hint (clicking a container still drills into just that
+  one node, e.g. focus on 2012 alone). A non-container cell gets the
+  same `▸` mark near its own corner whenever `nextLevelNodes()` would
+  return something, so a cell that looks flat (Depth too low, too
+  small, or its dominant child color happens to match its own) still
+  shows there's more to click into.
+  **Exceptions to auto-expanding via Depth, both still reachable by an
+  explicit click:** a sender-level cell never auto-expands into
+  individual messages (every message has count 1, so it's a wall of
+  same-size tiles, not informative) - month gets the same treatment,
+  by request (month is meant to be the max automatic step in the
+  Year -> Month breakdown). Separately, ANY cell whose next level would
+  be a SINGLE group also doesn't expand, regardless of dimension - a
+  lone child is the same 100%-of-area group just relabeled one
+  dimension finer, so expanding into it would only hide the parent's own
+  label for no informational gain (found live: Sent, authored entirely
+  by the account owner, grouped by Year - every year's "sender"
+  breakdown was just one group, so every year inline-expanded into a
+  blank single-sender blob and the year labels disappeared).
 - **`groupMessages()` caps how many distinct groups become their own
   cell**, and the cap is DIFFERENT for "message" than every other
   dimension. `MAX_GROUP_NODES` (200) applies to tag/domain/addressType/
@@ -317,6 +392,16 @@ e2e/                  podman-based Robot Framework smoke suite against a
   own search without drilling into it first. Keep both wired to the same
   action if either changes - they're meant to feel like one affordance
   reached two ways, not two separate features.
+- **The breadcrumb (`renderBreadcrumb()`) is a row of arrow-shaped
+  chips, not plain text with a "›" character between them.** Each
+  `<button>` is its own `clip-path` polygon (a point cut into one edge,
+  a matching notch in the other) sized by the shared `--notch` custom
+  property, so consecutive levels interlock into one ribbon; no
+  separate separator element needed. The notch's tip must point INWARD
+  (toward the next segment's own tip), not outward, or two segments read
+  as "><" meeting nose-to-nose instead of one continuous ">" chain -
+  found live, fixed once. `--crumb-a`/`--crumb-b` alternate per segment
+  (`:nth-of-type(even)`) so adjacent levels stay visually distinct.
 - **The address filter and `mailTabs.setQuickFilter()`'s text match
   must stay in the same scope.** `applyFilters()` (client-side, builds
   the treemap) and `buildQuickFilterProps()` (what actually gets sent to
@@ -326,8 +411,23 @@ e2e/                  podman-based Robot Framework smoke suite against a
   place: Thunderbird's own `QuickFilterTextDetail` has no such flag,
   only a combined `recipients` (To+Cc+Bcc) - said plainly in the README
   rather than faked with a client-side-only CC filter that the "jump to
-  search" link couldn't actually reproduce.
-
+  search" link couldn't actually reproduce. Exception: `jumpFilterFor()`
+  marks a domain/sender/message drill's filter `senderOnly` -
+  `buildQuickFilterProps()` then searches the sender field alone, not
+  sender+recipients, since those three dimensions are computed from a
+  message's author alone. Without this, drilling into your own address
+  as a sender matches nearly every message in the account (you're also
+  the recipient of most of them).
+- **Per-account message/tag cache in `browser.storage.local`, stale-
+  while-revalidate.** `loadData()` shows a cached account instantly if
+  `readCacheImpl()` finds one, then fetches for real in the background;
+  `messageSignature()` (a sorted-id fingerprint, order-independent)
+  decides whether anything actually changed before re-rendering -
+  rebuild() always resets the navigation stack back to "All folders",
+  so re-rendering on a no-op background refresh would silently kick the
+  user out of whatever they were drilled into for no reason. A cache
+  write/read failure (quota, disabled storage) is swallowed - caching
+  is an optimization, not something the view depends on to function.
 ## CI/CD & releases
 
 - **`main` is protected and only ever moves via PR** - required status
@@ -338,11 +438,10 @@ e2e/                  podman-based Robot Framework smoke suite against a
   actually merges once `test` passes - it doesn't bypass CI, it just
   removes the need to click merge by hand.
 - **Versioning is `.github/workflows/release.yml`, deliberately NOT
-  release-please/semantic-release/Conventional Commits.** An earlier
-  version of this pipeline used release-please; it was ripped out
-  because its whole engine is hard-wired to `feat`/`fix`/`!` vocabulary
-  with no config knob to just relabel those keywords, and this project
-  wants literal `major`/`minor`/`bugfix` instead. That word now appears
+  release-please/semantic-release/Conventional Commits.** release-please's
+  engine is hard-wired to `feat`/`fix`/`!` vocabulary with no config knob
+  to just relabel those keywords, and this project wants literal
+  `major`/`minor`/`bugfix` instead. That word now appears
   in exactly one of two places on a PR - a GitHub label (`major`,
   `minor`, or `bugfix`; checked first) or the PR title starting with
   `major:`/`minor:`/`bugfix:` (fallback; `patch:` also reads as
@@ -353,38 +452,32 @@ e2e/                  podman-based Robot Framework smoke suite against a
   making one of major/minor/bugfix the silent default.
 - **Merging a labeled/prefixed PR opens a second, small `release/vX.Y.Z`
   PR - merging THAT one (a deliberate, permanent manual step) is what
-  tags the repo and publishes a GitHub Release.** Two other designs were
-  tried and rejected, both live against this repo's actual first
-  release, before landing here:
-  1. A single commit pushed straight to `main` using a personal access
-     token stored in Actions secrets (bypassing "require a pull request"
-     via the admin-exemption on `enforce_admins: false`) - technically
-     worked, but was explicitly declined: a stored PAT with write access
-     to the repo is a real credential to be cautious about, not a call
-     for this pipeline to overrule on the user's behalf. **Don't
-     reintroduce a PAT-based direct-push design without the user asking
-     for it again** - this was a considered "no," not an oversight.
-  2. Auto-merging the `release/*` PR with `GITHUB_TOKEN` (no PAT
-     needed) - but a `GITHUB_TOKEN`-driven merge doesn't trigger further
-     workflow runs (GitHub's anti-recursion protection, undocumented in
-     this file until it broke something) - the `release/*` PR merging
-     silently never fired the tag/release step at all. No error
-     anywhere; it just never happened.
-  The current design keeps `GITHUB_TOKEN` only (hop 1 opens the PR) but
-  does NOT auto-merge it - a human merging it (the GitHub UI, or asking
-  Claude to do it through its own authenticated `gh` session, which is a
-  real user action, not a workflow's `GITHUB_TOKEN`) sidesteps the
-  anti-recursion limit for free, with no new secret, while also being a
-  legitimate checkpoint before anything reaches the Thunderbird store -
-  not merely a workaround. GitHub sometimes holds that PR's own CI run
-  for manual "action_required" approval too, since it's opened by
+  tags the repo and publishes a GitHub Release.** Hop 1 (opening that PR)
+  runs on `GITHUB_TOKEN` alone - no PAT, and it does NOT auto-merge the
+  PR it opens. **Don't push straight to `main` with a stored personal
+  access token to skip this step** - a PAT with write access to the repo
+  is a real credential risk, not something this pipeline should hold on
+  the user's behalf. **Don't auto-merge the `release/*` PR with
+  `GITHUB_TOKEN` either** - GitHub's anti-recursion protection means a
+  `GITHUB_TOKEN`-driven merge doesn't trigger further workflow runs, so
+  the tag/release step would silently never fire, with no error anywhere.
+  A human merging it instead (the GitHub UI, or Claude through its own
+  authenticated `gh` session, which counts as a real user action)
+  sidesteps that limit for free, with no new secret, and doubles as a
+  legitimate checkpoint before anything reaches the Thunderbird store.
+  GitHub sometimes holds that PR's own CI run for manual
+  "action_required" approval too, since it's opened by
   `github-actions[bot]` - that's a normal part of reviewing/merging it,
   not a bug (`gh api -X POST repos/OWNER/REPO/actions/runs/<id>/approve`
   clears it, same as clicking Approve in the Actions tab). Branch
   protection's `strict: true` (require branch up to date) can also mark
-  this PR stale (`BEHIND`) if an unrelated PR merges first (found live:
-  a Dependabot bump did exactly this) - `gh api -X PUT
-  repos/OWNER/REPO/pulls/<n>/update-branch` re-syncs it before merging.
+  this PR stale (`BEHIND`) if an unrelated PR merges first - `gh api -X
+  PUT repos/OWNER/REPO/pulls/<n>/update-branch` re-syncs it before
+  merging. **Hop 2's own step needs its own `git config
+  user.name`/`user.email`** - it's a separate job step from hop 1's
+  PR-opening one that already sets those, and an annotated tag (`git tag
+  -a`) fails outright without a committer identity (`fatal: empty ident
+  name`).
 - **A published GitHub Release is what triggers
   `.github/workflows/publish-thunderbird.yml`** (`on: release:
   types: [published]`, not `on: push: tags`) - it rebuilds the `.xpi`
@@ -407,6 +500,14 @@ e2e/                  podman-based Robot Framework smoke suite against a
   upload just means it doesn't wait around for that async result, not
   that signing itself didn't happen. Don't reintroduce the old
   "unverified, may need a manual first upload" hedge; this is settled.
+  **But the SECOND listed version needs one prerequisite, also confirmed
+  live (v1.0.1 failed on it)**: ATN rejects a second listed version via
+  the API with `You cannot add a listed version to this addon via the
+  API due to missing metadata. Please submit via the website` until the
+  add-on's Description is filled in on the ATN Developer Hub - addon-
+  level metadata no manifest key or API call in this pipeline sets, a
+  genuine one-time human step (see README's "Publishing to Thunderbird
+  Add-ons"), not a bug in `publish-thunderbird.yml` to chase.
 - **Dependabot has exactly two ecosystems to watch, both grouped weekly**
   (`.github/dependabot.yml`): `github-actions` (the actions these
   workflows use) and `docker` (`build/Containerfile`'s `node:20-slim`
@@ -416,17 +517,49 @@ e2e/                  podman-based Robot Framework smoke suite against a
 
 ## Known gaps / TODO
 
+- **The README's coverage badge is CI-generated, not a static number
+  someone has to remember to refresh.** A step in `.github/workflows/
+  ci.yml` (only `if: github.ref == 'refs/heads/main' && github.event_name
+  == 'push'` - not on every PR, so unmerged/abandoned work never
+  touches it) runs `node --test --experimental-test-coverage`, parses
+  the "all files" line-% out of its human-readable table output (`awk
+  -F'|' '/all files/ {...}'` - there's no JSON/lcov output mode for
+  this reporter, hence parsing text), and pushes a small shields.io
+  "endpoint" JSON file (`{schemaVersion, label, message, color}`) to a
+  separate, UNPROTECTED `badges` branch - `git push` there needs no PAT,
+  main's branch protection doesn't apply to a different branch.
+  `build/build.sh` also runs with `--experimental-test-coverage` now
+  (matches what CI computes) so `./build/run.sh` shows the same number
+  locally. The badge itself (`img.shields.io/endpoint?url=<raw
+  coverage-badge.json on the badges branch>`) always reflects whatever
+  JSON is currently there - editing the badge URL or the JSON schema
+  are the only ways to change what it shows, there is no manual
+  "refresh" step to remember. This IS whole-file LINE coverage of
+  `cussijn.js`, though, which mixes the fully-tested pure logic with
+  `initUi()`'s deliberately-untested DOM wiring (see the
+  `cussijn.test.js` bullet in Architecture above) - don't read a modest
+  number here as "half the logic is untested," and don't try to
+  inflate it by unit-testing DOM wiring that's supposed to stay covered
+  by the e2e suite instead; the README states this caveat plainly right
+  next to the badge - keep that pairing.
 - There IS now an automated test against a real Thunderbird
   (`e2e/`, `./e2e/run.sh`) - but it's a shallow smoke test (does the real
   .xpi install and activate, does its page open without erroring), not a
   DOM/interaction test. It cannot currently read anything out of
   cussijn.html's own rendered page (see e2e/README.md's "Known
   limitation" - genuinely investigated and confirmed, not just
-  unattempted) or exercise real `messenger.*` data (empty profile, no
-  seeded mail - see e2e/README.md's "No mail fixture data"). The unit
-  tests remain what actually covers the pure logic (folder/tag
-  aggregation, the treemap layout math); don't treat the e2e suite as a
-  substitute for either that or a real DOM-rendering test.
+  unattempted). The unit tests remain what actually covers the pure
+  logic (folder/tag aggregation, the treemap layout math); don't treat
+  the e2e suite as a substitute for either that or a real DOM-rendering
+  test. **Synthetic mail fixture data now exists though**
+  (`e2e/fixtures/generate_fixture.py` - see e2e/README.md's "Mail
+  fixture data"), used by `e2e/robot/screenshot.robot`
+  (`./e2e/screenshot.sh`) to generate the README's `docs/screenshot.png`
+  against a real headless Thunderbird - a full-window screenshot works
+  fine (`Marionette.screenshot()`, browser-window level) even though
+  reading the page's own DOM still doesn't. Don't wire `screenshot.sh`
+  into CI/`run.sh` - it's on-demand only, regenerating an identical
+  image on every push would be pure waste.
 - `buildFolderTree()` assumes a message's `folder.id` (from
   `messages.query()`) matches a `MailFolder.id` in the SAME account's
   `rootFolder.subFolders` tree (from `accounts.list(true)`, a separate
@@ -453,4 +586,7 @@ e2e/                  podman-based Robot Framework smoke suite against a
 Entirely inside Thunderbird, on whatever machine the user installs it
 on. `build/` runs in a podman container on a dev machine only, for
 linting/testing/packaging - it never ships or runs on the end user's
-machine.
+machine. `local-build.sh` additionally copies its output to
+`C:\Users\Thadir\Documents\SequoiaView\cussijn-tree-view.xpi` (Thadir's
+own install-from-file folder) - `/mnt/c/Users/Thadir/Documents/SequoiaView`
+from inside WSL2.

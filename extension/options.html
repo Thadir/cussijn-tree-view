@@ -12,23 +12,25 @@
 <body>
   <h1>Cussijn Tree View</h1>
   <p>
-    A treemap of your mailbox, in the style of the old SequoiaView disk-space
-    tool and using the same "cushion treemap" shading technique (van Wijk
-    &amp; van de Wetering, TU Eindhoven) its name winks at - each folder is a
-    rectangle sized by message count (or size), colored by whichever message
-    tag is most common in it. Click the toolbar button (or press
-    Ctrl+Shift+Y, or right-click a folder and choose "Open in Cussijn Tree
-    View") to open it as a tab; click any folder's rectangle to drill into
-    its real contents - by whichever dimension you're grouping by, then by
-    sender.
+    Draws your mailbox as a treemap, the way old SequoiaView drew disk
+    usage. Each folder is a rectangle, sized by message count (or size)
+    and colored by whichever tag shows up most inside it. The shading
+    itself borrows the "cushion treemap" technique van Wijk &amp; van de
+    Wetering published at TU Eindhoven - where "Cussijn" (Dutch for
+    cushion) comes from.
   </p>
   <p>
-    This extension only ever calls Thunderbird's own <code>messenger.accounts</code>,
-    <code>messenger.messages</code>, and <code>messenger.menus</code> APIs to
-    read message headers/tags and add its one folder-pane context menu entry -
-    it never opens a network connection, never sends anything anywhere, and
-    has no companion process or native host to install. There is nothing else
-    to configure here.
+    Open it with Ctrl+Shift+Y, from Tools -&gt; Cussijn Tree View, or by
+    right-clicking a folder and choosing "Open in Cussijn Tree View."
+    Click any rectangle to drill in - first by whichever dimension
+    you're grouping by, then by sender.
+  </p>
+  <p>
+    It only touches Thunderbird's own <code>messenger.accounts</code>,
+    <code>messenger.messages</code>, and <code>messenger.menus</code> -
+    reading headers and tags, and adding one context-menu entry. No
+    network connection, nothing sent anywhere, no companion process.
+    Nothing here to configure.
   </p>
 </body>
 </html>

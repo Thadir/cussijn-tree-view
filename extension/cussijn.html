@@ -8,12 +8,18 @@
     --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f2f1ec;
     --ink: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
     --grid: #e1e0d9; --border: rgba(11,11,11,0.10);
+    --pill-hover: rgba(255,255,255,0.15); /* hover overlay for a dark chip (ink) on light text (page) */
+    --crumb-a: var(--ink);
+    --crumb-b: #4a4946; /* alternate chip shade, so adjacent levels are visually distinct chips */
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232320;
       --ink: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
       --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+      /* --ink/--page invert here, so the chips are now light-on-dark-text */
+      --pill-hover: rgba(0,0,0,0.08);
+      --crumb-b: #d6d5cd;
     }
   }
   * { box-sizing: border-box; }
@@ -34,8 +40,38 @@
     border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer;
   }
   button.active { background: var(--ink); color: var(--page); border-color: var(--ink); }
-  .breadcrumb { font-size: 0.85em; color: var(--ink-2); }
-  .breadcrumb button { background: none; border: none; text-decoration: underline; color: inherit; padding: 0; border-radius: 0; }
+  /* Each level is its own arrow-shaped chip (clip-path, not a "›"
+     character) - the point on one edge and the notch on the other are
+     sized to match, so consecutive chips interlock into one ribbon
+     instead of just sitting side by side. Same ink/page color inversion
+     `button.active` already uses elsewhere on this page, alternated
+     between --crumb-a/--crumb-b per chip so adjacent levels read as
+     visually distinct pieces of the ribbon. */
+  .breadcrumb { display: inline-flex; align-items: stretch; gap: 0; font-size: 0.8em; }
+  .breadcrumb button {
+    --notch: 6px;
+    background: var(--crumb-a); border: none; color: var(--page); font: inherit; font-weight: 600;
+    padding: 3px 8px 3px 6px; border-radius: 0; cursor: pointer;
+    clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% 50%, calc(100% - var(--notch)) 100%, 0 100%);
+  }
+  .breadcrumb button:nth-of-type(even) { background: var(--crumb-b); }
+  /* The left notch's tip sits at x = var(--notch) (pointing INWARD,
+     toward the right tip) - not at x = 0 (which would point outward and
+     read as "><", two arrows meeting nose-to-nose, instead of one
+     continuous ">" chain each segment nests into the next). */
+  .breadcrumb button:not(:first-child) {
+    padding-left: calc(6px + var(--notch));
+    clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% 50%, calc(100% - var(--notch)) 100%, 0 100%, var(--notch) 50%);
+  }
+  .breadcrumb button:last-child {
+    padding-right: 6px;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, var(--notch) 50%);
+  }
+  /* A lone breadcrumb entry (just "All folders", nothing drilled into
+     yet) is both first and last - plain rectangle, no arrow shape on
+     either side needed since there's nothing for it to interlock with. */
+  .breadcrumb button:first-child:last-child { clip-path: none; padding: 3px 10px; }
+  .breadcrumb button:hover { filter: brightness(1.2); }
   #status { padding: 8px 16px; font-size: 0.85em; color: var(--ink-muted); }
   #treemap-wrap { flex: 1; padding: 8px; min-height: 300px; }
   #treemap { position: relative; width: 100%; height: 100%; }
@@ -56,7 +92,25 @@
   .cell.empty::before { display: none; }
   .cell-label { color: #fff; font-size: 0.78em; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cell-sub { color: rgba(255,255,255,0.85); font-size: 0.68em; text-shadow: 0 1px 2px rgba(0,0,0,0.4); white-space: nowrap; overflow: hidden; }
-  .cell.tiny .cell-label, .cell.tiny .cell-sub { display: none; }
+  .cell.tiny .cell-label, .cell.tiny .cell-sub, .cell.tiny .drill-hint, .cell.tiny .cell-header { display: none; }
+  /* A container's own label, pinned to the top of the cell regardless
+     of the bottom-anchored flex layout .cell-label/.cell-sub use -
+     layoutTree() reserves HEADER_H of space above its nested children
+     specifically so this always sits over plain cell background. */
+  .cell-header {
+    position: absolute; top: 0; left: 0; right: 0; height: 17px;
+    display: flex; align-items: center; gap: 4px; padding: 0 8px;
+    color: #fff; font-size: 0.72em; font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .cell-header-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The drill hint sits right after the label, inside the header's own
+     flex row - not a separately-positioned corner element, so it can
+     never end up hidden behind something else or off past the visible
+     text. */
+  .cell-header-hint { flex-shrink: 0; font-size: 0.85em; font-weight: 400; opacity: 0.85; }
   .tooltip {
     position: fixed; pointer-events: none; z-index: 20; background: var(--ink); color: var(--page);
     font-size: 0.8em; padding: 10px 12px; border-radius: 8px; max-width: 300px; opacity: 0;
@@ -103,6 +157,19 @@
   .cell:hover .go-btn { opacity: 1; }
   .go-btn svg { width: 12px; height: 12px; }
 
+  /* A quiet always-on hint (not hover-gated, unlike .go-btn) that a cell
+     still has more inside it at a finer level than Depth is currently
+     showing - the whole cell is already clickable to drill in one step;
+     this just makes that discoverable at a glance instead of only on
+     hover, especially for large cells that render as a flat single color
+     when their next level's breakdown happens to share that same color. */
+  .drill-hint {
+    position: absolute; bottom: 5px; right: 7px; color: rgba(255,255,255,0.8);
+    font-size: 11px; line-height: 1; text-shadow: 0 1px 2px rgba(0,0,0,0.5); pointer-events: none;
+  }
+  /* Same mark, but sitting in the header band instead of the bottom
+     corner - a container's bottom corner is inside NEST_INSET, too
+     thin to hold it without overlapping its own nested children. */
   .depth-ctrl { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82em; color: var(--ink-2); }
   .depth-ctrl button { padding: 3px 9px; border-radius: 100px; }
   .depth-ctrl span { min-width: 1em; text-align: center; font-variant-numeric: tabular-nums; }
@@ -114,11 +181,12 @@
     <select id="account-select"></select>
     <button id="mode-count" class="active">By count</button>
     <button id="mode-size">By size</button>
-    <span class="depth-ctrl" title="How many nested levels to show at once - folder(s), then Group-by, then sender, then individual messages">
+    <span class="depth-ctrl" title="How many nested levels to show at once - folder(s), then Group-by, then sender, then individual messages. A cell with a ▸ mark still has more inside it - click the cell (or right-click for a shortcut) to step one level further in, regardless of Depth.">
       Depth
-      <button id="depth-minus" type="button">−</button>
+      <button id="depth-minus" type="button" title="Show one fewer nested level at once">−</button>
       <span id="depth-value">2</span>
-      <button id="depth-plus" type="button">+</button>
+      <button id="depth-plus" type="button" title="Show one more nested level at once">+</button>
+      <button id="depth-max" type="button" title="Show as many nested levels at once as this view supports">Max</button>
     </span>
     <button id="refresh">Refresh</button>
     <span class="breadcrumb" id="breadcrumb"></span>
@@ -130,8 +198,10 @@
     <button id="group-tag" class="active">Tag</button>
     <button id="group-domain">Sender domain</button>
     <button id="group-address-type">To / Cc / Bcc</button>
+    <button id="group-year">Year</button>
     <span class="sep"></span>
     <span class="label">Filter</span>
+    <button id="hide-sent-by-me" type="button" title="Hide messages you sent - IMAP defines &quot;All Mail&quot; as every message in the account, sent and received alike, so your own replies show up there too">Hide sent by me</button>
     <span id="tag-filters"></span>
     <input id="address-filter" type="text" placeholder="Address contains, e.g. paypal.com">
     <span id="filter-count" hidden></span>

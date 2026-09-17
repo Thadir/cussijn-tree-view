@@ -9,25 +9,48 @@
  * there is no access-control boundary to enforce (no second party is
  * sending this extension commands).
  *
- * Four ways to open the view, all landing on the same openOrFocusView():
- *   1. The toolbar button (browserAction).
- *   2. A keyboard shortcut (the "open-cussijn-tree-view" command in
+ * Three ways to open the view, all landing on the same openOrFocusView():
+ *   1. A keyboard shortcut (the "open-cussijn-tree-view" command in
  *      manifest.json, Ctrl+Shift+Y by default - user-remappable in
  *      Thunderbird's Add-ons Manager gear menu -> Manage Extension
  *      Shortcuts).
- *   3. Tools menu -> "Cussijn Tree View" - the real top-menu-bar entry
+ *   2. Tools menu -> "Cussijn Tree View" - the real top-menu-bar entry
  *      point a WebExtension can actually get (contexts: ["tools_menu"]).
  *      There is no supported way to add an entry to Thunderbird's native
  *      "View" menu specifically - checked against
  *      webextension-api.thunderbird.net's menus docs, whose `contexts`
  *      list has `tools_menu` but nothing for View - so Tools is the
  *      closest real top-menu-bar equivalent, not a consolation prize.
- *   4. Right-click a folder in the folder pane -> "Open in Cussijn Tree
+ *   3. Right-click a folder in the folder pane -> "Open in Cussijn Tree
  *      View" - opens already drilled into that folder (see cussijn.js
  *      reading the ?folder= query param).
+ *
+ * No toolbar button (browser_action): it can't reliably resolve the
+ * right account from a background script's tab-focus state, and these
+ * three entry points already cover the same job.
  */
 
 let viewTabId = null;
+
+// The keyboard shortcut and the Tools-menu entry both open with no
+// folder in mind - loadAccounts() then needs to know which account to
+// default to, since "no folder in mind" isn't the same as "the first
+// account in the profile." mailTabs.query()'s displayedFolder (needs
+// accountsRead, already held) gives us that for free. Querying with
+// { active: true } alone isn't enough, since the Cussijn Tree View tab
+// itself is often what's focused when you reach for the shortcut again,
+// and no mail tab is "active" while a content tab has focus - falling
+// back to whichever mail tab query() finds at all covers the common
+// one-mail-tab-per-window case.
+async function currentDisplayedFolderId() {
+  try {
+    const tabs = await messenger.mailTabs.query({ currentWindow: true });
+    const tab = tabs.find((t) => t.active) || tabs[0];
+    return tab && tab.displayedFolder && tab.displayedFolder.id;
+  } catch (e) {
+    return undefined;
+  }
+}
 
 async function openOrFocusView(folderId) {
   const url = folderId
@@ -45,8 +68,6 @@ async function openOrFocusView(folderId) {
   viewTabId = tab.id;
 }
 
-browser.browserAction.onClicked.addListener(() => openOrFocusView());
-
 if (messenger.tabs && messenger.tabs.onRemoved) {
   messenger.tabs.onRemoved.addListener((tabId) => {
     if (tabId === viewTabId) viewTabId = null;
@@ -54,8 +75,8 @@ if (messenger.tabs && messenger.tabs.onRemoved) {
 }
 
 if (messenger.commands && messenger.commands.onCommand) {
-  messenger.commands.onCommand.addListener((command) => {
-    if (command === "open-cussijn-tree-view") openOrFocusView();
+  messenger.commands.onCommand.addListener(async (command) => {
+    if (command === "open-cussijn-tree-view") openOrFocusView(await currentDisplayedFolderId());
   });
 }
 
@@ -78,7 +99,7 @@ if (messenger.menus) {
   );
   messenger.menus.onClicked.addListener((info) => {
     if (info.menuItemId === TOOLS_MENU_ID) {
-      openOrFocusView();
+      currentDisplayedFolderId().then(openOrFocusView);
     } else if (info.menuItemId === FOLDER_MENU_ID) {
       const folder = info.selectedFolders && info.selectedFolders[0];
       openOrFocusView(folder && folder.id);

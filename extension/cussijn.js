@@ -1,39 +1,21 @@
 /*
  * Cussijn Tree View - the treemap itself.
  *
- * The name winks at "cushion treemaps" (van Wijk & van de Wetering,
- * 1999, TU Eindhoven) - the shading technique real SequoiaView (also
- * from that group) is known for - via "cussijn," an archaic Dutch
- * spelling of "cushion." This is a squarified treemap (Bruls, Huizing,
- * van Wijk, 2000 - see squarify()) of the mailbox's folder structure,
- * sized by message count or MB, with hover detail, a filter bar (tag
- * OR-selection, address-text search), a switchable coloring/grouping
- * dimension (tag / sender domain / To-Cc-Bcc), a "jump to search"
- * action that opens a real Thunderbird mail tab with the same filter
- * applied via mailTabs.setQuickFilter(), and recursive drill-down that
- * mirrors the account's REAL folder tree first (buildFolderTree() - a
- * folder's own real subfolders, arbitrarily deep, the way real
- * SequoiaView opens a directory into its actual subdirectories) and
- * then, once that bottoms out at a leaf folder, keeps drilling by
- * content: the active Group-by dimension -> sender -> message ->
- * (terminal) - "message" being the actual bottom of this data, one cell
- * per email (see groupMessages()/nextDimension()). A "Depth" control
- * (initUi()'s `depth`/layoutTree()) shows that many levels NESTED at
- * once starting from the current view, rather than forcing one click
- * per level - depth 1 is the original click-only behavior; clicking any
- * cell, at any depth, still drills the whole view one step further in.
+ * Squarified treemap (Bruls, Huizing, van Wijk, 2000 - see squarify())
+ * of the mailbox's folder tree, sized by message count or MB. Drilling
+ * goes structural first (buildFolderTree() - real subfolders, as deep
+ * as the account's own tree goes), then, once that bottoms out, by
+ * content: Group-by dimension -> sender -> message -> terminal (see
+ * groupMessages()/nextDimension()). "Depth" (layoutTree()) shows
+ * several of those levels nested at once instead of one click per
+ * level; clicking a cell still drills one step further regardless.
  *
- * Calls messenger.accounts/messenger.messages/messenger.mailTabs
- * directly - there is no second party to relay through and no
- * access-control boundary to enforce here (no dispatch table, because
- * there's no external caller a dispatch table would need to gate).
- * Reading mail is exactly the permission the user already granted at
- * install.
+ * Calls messenger.accounts/messages/mailTabs directly - no dispatch
+ * table, since nothing else calls into this extension.
  *
  * Also runs under plain Node for cussijn.test.js (module.exports guard
- * at the bottom) - the pure layout/aggregation/filter/color functions
- * are what's worth unit-testing; DOM wiring and the real messenger.*
- * calls are not.
+ * at the bottom): the pure layout/aggregation/filter/color functions
+ * are unit-tested; DOM wiring and the real messenger.* calls aren't.
  */
 
 const PALETTE_ORDER = [
@@ -43,35 +25,31 @@ const PALETTE_ORDER = [
 const UNCATEGORIZED_COLOR = "#898781";
 const EMPTY_LABEL = "Empty";
 const ADDRESS_TYPES = ["Direct (To)", "Cc", "Bcc", "Other"];
+// Dimensions jumpFilterFor() can't add anything for - no matching
+// mailTabs.setQuickFilter() facet exists for any of these.
+const NO_SEARCH_FACET = new Set(["addressType", "year", "month"]);
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
 function folderName(path) {
   const parts = path.split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path;
 }
 
-// A Thunderbird MailFolderId is "<accountId>://<path>" (confirmed live -
-// e.g. "account4://INBOX", not assumed from docs) - so the account a
-// deep-linked folder belongs to is already encoded in the folder id
-// itself, no separate account id needs to travel alongside it. Used to
-// pick the RIGHT account for a folder-pane "Open in Cussijn Tree View"
-// deep link instead of always defaulting to the first account in the
-// list - found live: right-clicking a folder in a second (Gmail)
-// account still opened showing the first-listed (IMAP) account, because
-// loadAccounts() ignored pendingFolderId entirely when choosing
-// currentAccountId.
+// A MailFolderId is "<accountId>://<path>" - lets a folder-pane deep
+// link pick the right account instead of always defaulting to the
+// first one.
 function accountIdFromFolderId(folderId) {
   if (!folderId) return null;
   const idx = folderId.indexOf("://");
   return idx === -1 ? null : folderId.slice(0, idx);
 }
 
-// The account picker previously showed `account.name` - whatever the
-// user (or an import wizard) happened to type as that account's
-// display name in Thunderbird's settings, which is not necessarily
-// distinguishing at a glance (e.g. two accounts both just named "Mail").
-// The account's own identity email is unambiguous and matches what the
-// user actually thinks of the account as - falls back to `account.name`
-// only for the edge case of an account with no identities at all.
+// Shows the account's own identity email rather than account.name (an
+// arbitrary display name that can collide - e.g. two accounts both
+// just named "Mail").
 function accountDisplayName(account) {
   const email = account.identities && account.identities[0] && account.identities[0].email;
   return email || account.name;
@@ -83,11 +61,8 @@ function assignPalette(tagNames) {
   return palette;
 }
 
-// A stable (not re-randomized every render), automatically-distinct
-// color per arbitrary string - used for the "group by domain" coloring
-// mode, where the set of domains isn't known ahead of time the way the
-// tag list is. Same domain always gets the same color, this run and
-// next; different domains land at different, evenly-spread hues.
+// Stable, automatically-distinct color per string - used where the set
+// of values (domains, senders) isn't known ahead of time.
 function hashColor(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -108,21 +83,15 @@ function senderDomain(author) {
   return at === -1 ? "" : email.slice(at + 1);
 }
 
-// Every address field a message carries, concatenated and lowercased -
-// the one place "does this message involve paypal.com at all" gets
-// answered, whether paypal.com shows up as the sender, a To, a Cc, or a
-// Bcc. Matching only From (an earlier version of this file did) misses
-// e.g. a receipt where paypal.com is Cc'd rather than the sender.
+// Every address field, concatenated - lets an address filter match a
+// Cc or Bcc, not just the sender.
 function allAddressText(m) {
   return [m.author, ...(m.recipients || []), ...(m.ccList || []), ...(m.bccList || [])]
     .filter(Boolean).join(" ").toLowerCase();
 }
 
-// Classifies a message by how the mailbox owner was addressed:
-// "Direct (To)" if one of myAddresses is in the To list, "Cc"/"Bcc" if
-// only there, "Other" if none of the owner's own addresses appear at
-// all (a mailing list post, a Bcc the account can't see itself in,
-// etc.) - myAddresses comes from the current account's identities.
+// How the mailbox owner was addressed: Direct (To), Cc, Bcc, or Other
+// (none of myAddresses appears at all - a mailing list post, e.g.).
 function classifyAddressType(message, myAddresses) {
   const mine = new Set((myAddresses || []).map((a) => a.toLowerCase()));
   if (!mine.size) return "Other";
@@ -133,24 +102,32 @@ function classifyAddressType(message, myAddresses) {
   return "Other";
 }
 
-// Client-side pre-filter, applied to the raw message list before
-// buildFolderTree(): narrows the whole treemap to what actually
-// matches, rather than just dimming cells.
-//   tagKeys: raw tag keys (e.g. "$cat_banking") - a message must carry
-//            at least one (OR across a multi-tag selection, matching
-//            mailTabs.setQuickFilter's {mode:"any"} semantics used
-//            later for the same filter).
-//   addressText: substring match against From + To + Cc + Bcc combined
-//            (see allAddressText) - so filtering by a domain like
-//            "paypal.com" catches it in any address role, not just as
-//            sender.
-// A message must satisfy every filter TYPE that's active (tags AND
-// address), but within a type, any match is enough (OR) - standard
-// facet-filter behavior.
-function applyFilters(messages, filters) {
+// Was this message sent BY the mailbox owner? Used by "Hide sent by
+// me" - Gmail's All Mail includes your own sent replies by IMAP
+// definition, so there's no folder-level way to see received-only mail
+// there the way Inbox gives you for free.
+function isSentByMe(message, myAddresses) {
+  const mine = new Set((myAddresses || []).map((a) => a.toLowerCase()));
+  return mine.has(extractEmail(message.author));
+}
+
+// Calendar year a message was sent in, as a plain string ("2026").
+function messageYear(message) {
+  return message.date ? String(new Date(message.date).getFullYear()) : "(unknown)";
+}
+
+// Client-side pre-filter applied before buildFolderTree() - narrows
+// the whole treemap, not just dims cells.
+//   tagKeys: a message needs at least one (OR across a selection).
+//   addressText: substring match across From/To/Cc/Bcc.
+//   hideSentByMe: drops messages authored by one of myAddresses.
+// All active filter types must pass (AND); within a type, any match is
+// enough (OR).
+function applyFilters(messages, filters, myAddresses) {
   filters = filters || {};
   const tagKeys = filters.tagKeys || [];
   const addressText = (filters.addressText || "").toLowerCase().trim();
+  const hideSentByMe = !!filters.hideSentByMe;
 
   return messages.filter((m) => {
     if (tagKeys.length) {
@@ -158,6 +135,7 @@ function applyFilters(messages, filters) {
       if (!tagKeys.some((t) => mTags.includes(t))) return false;
     }
     if (addressText && !allAddressText(m).includes(addressText)) return false;
+    if (hideSentByMe && isSentByMe(m, myAddresses)) return false;
     return true;
   });
 }
@@ -166,26 +144,25 @@ function topEntries(counter, n) {
   return [...counter.entries()].sort((a, b) => b[1] - a[1]).slice(0, n || Infinity);
 }
 
-// Tallies a message list into THREE independent breakdowns at once (tag,
-// sender domain, address type) so switching the "color by" dimension in
-// the UI is just a re-render, not a re-fetch. `tagLabels` maps a raw tag
-// key to a display name; `myAddresses` (the current account's own
-// identity emails) drives the address-type breakdown - pass [] if
-// unknown, everything then falls back to "Other". Shared by every level
-// of the folder tree (buildFolderTree) - a parent folder's breakdown is
-// over its whole subtree's messages, not just its own.
+// Tallies tag/domain/address-type/year breakdowns together so
+// switching "Group by" is a re-render, not a re-fetch. Shared by every
+// folder-tree level - a parent's breakdown covers its whole subtree,
+// not just its own messages.
 function computeBreakdowns(messages, tagLabels, myAddresses) {
   tagLabels = tagLabels || {};
   myAddresses = myAddresses || [];
   const tagCounts = new Map();
   const domainCounts = new Map();
   const addressTypeCounts = new Map();
+  const yearCounts = new Map();
   for (const m of messages) {
     for (const t of m.tags || []) tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
     const domain = senderDomain(m.author) || "(unknown)";
     domainCounts.set(domain, (domainCounts.get(domain) || 0) + 1);
     const addrType = classifyAddressType(m, myAddresses);
     addressTypeCounts.set(addrType, (addressTypeCounts.get(addrType) || 0) + 1);
+    const year = messageYear(m);
+    yearCounts.set(year, (yearCounts.get(year) || 0) + 1);
   }
 
   const sortedTags = topEntries(tagCounts);
@@ -202,31 +179,25 @@ function computeBreakdowns(messages, tagLabels, myAddresses) {
   const dominantAddressType = sortedAddressTypes.length ? sortedAddressTypes[0][0] : "Other";
   const addressTypeBreakdown = Object.fromEntries(sortedAddressTypes);
 
+  const sortedYears = topEntries(yearCounts);
+  const dominantYear = sortedYears.length ? sortedYears[0][0] : "(unknown)";
+  const yearBreakdown = Object.fromEntries(sortedYears);
+
   return {
     dominantTag, dominantTagKey, tagBreakdown,
     dominantDomain, domainBreakdown,
     dominantAddressType, addressTypeBreakdown,
+    dominantYear, yearBreakdown,
   };
 }
 
-// Turns Thunderbird's REAL folder hierarchy (an account's rootFolder,
-// with subFolders populated recursively - see accounts.list(true) in
-// realListAccounts()) into a treemap-ready tree: one node per real
-// folder, nested exactly the way the account's own folder pane nests
-// them - not the flat "one entry per distinct full path" an earlier
-// version of this file built, which showed a folder and its own
-// subfolder as unrelated siblings instead of parent and child.
-//
-// A node's `messages` is the recursive union of its own direct messages
-// plus every descendant folder's messages, so a parent's size and color
-// reflect its whole subtree - the same convention a real disk-usage
-// view uses (a directory's size includes its subdirectories'). A folder
-// that has BOTH its own direct messages AND real subfolders gets one
-// extra "(direct in this folder)" child so neither is silently folded
-// into the other; a folder with no subfolders at all just has its own
-// messages as its full content, same as before. Folders (and subtrees)
-// with zero messages anywhere in them are dropped, same as the old
-// behavior of only ever showing folders that actually matched something.
+// Turns Thunderbird's real folder hierarchy into a treemap-ready tree,
+// nested the same way the folder pane nests it. A node's `messages` is
+// the union of its own direct messages plus every descendant's (like a
+// disk-usage view's directory size). A folder with both its own
+// messages and real subfolders gets a synthetic "(direct in this
+// folder)" child so neither silently absorbs the other. Folders with
+// zero messages anywhere in their subtree are dropped.
 function buildFolderTree(rootFolder, messages, tagLabels, myAddresses) {
   const byFolderId = new Map();
   for (const m of messages) {
@@ -255,10 +226,9 @@ function buildFolderTree(rootFolder, messages, tagLabels, myAddresses) {
   function build(folder) {
     const ownMessages = byFolderId.get(folder.id) || [];
     const children = (folder.subFolders || []).map(build).filter((c) => c.count > 0);
-    // Computed from `children` before the synthetic node below is added
-    // to it - that node's `messages` IS `ownMessages`, so adding it
-    // first and then summing children's `.messages` would double-count
-    // every direct message once as ownMessages and once via the child.
+    // Computed before the synthetic node below is added to `children` -
+    // that node's messages ARE ownMessages, so summing after would
+    // double-count them.
     const allMessages = ownMessages.concat(...children.map((c) => c.messages));
 
     if (ownMessages.length && children.length) {
@@ -275,12 +245,10 @@ function buildFolderTree(rootFolder, messages, tagLabels, myAddresses) {
     .sort((a, b) => b.count - a.count);
 }
 
-// Depth-first search for the ancestor chain (root..target, inclusive)
-// leading to a given real folder id, through a tree built by
-// buildFolderTree() - used to auto-drill to a specific folder (e.g. from
-// background.js's folder-pane context menu entry) by replaying
-// drillInto() once per ancestor, so the breadcrumb ends up showing the
-// real path instead of jumping there with no trail to climb back out on.
+// Root..target ancestor chain for a folder id, through a
+// buildFolderTree() tree - used to auto-drill to one folder (e.g. a
+// folder-pane deep link) with a real breadcrumb trail, not a single
+// jump with nothing to climb back out on.
 function findFolderPath(nodes, folderId) {
   for (const n of nodes) {
     if (n.folderId === folderId) return [n];
@@ -293,90 +261,72 @@ function findFolderPath(nodes, folderId) {
 }
 
 // Picks which precomputed dimension a node is grouped/colored by right
-// now - "tag" | "domain" | "addressType" - returning {group, breakdown}
-// so render()/legend/tooltip don't need a big switch each time.
+// now - "tag" | "domain" | "addressType" | "year" - returning
+// {group, breakdown} so render()/legend/tooltip don't need a big
+// switch each time.
 function groupFor(node, mode) {
   if (mode === "domain") return { group: node.dominantDomain, breakdown: node.domainBreakdown };
   if (mode === "addressType") return { group: node.dominantAddressType, breakdown: node.addressTypeBreakdown };
+  if (mode === "year") return { group: node.dominantYear, breakdown: node.yearBreakdown };
   return { group: node.dominantTag, breakdown: node.tagBreakdown };
 }
 
-// --- recursive drill-down, past the folder tree: content dimension -> sender ---
-//
-// buildFolderTree()/findFolderPath() (above) handle the first stretch of
-// drilling - real subfolder -> real subfolder, exactly following the
-// account's own folder structure, arbitrarily deep, the way real
-// SequoiaView opens a directory into its actual subdirectories. Once
-// that bottoms out (a folder with no real subfolders left, or the
-// synthetic "(direct in this folder)" leaf - see drillInto()), THESE
-// four functions take over: each further click regroups the SAME
-// underlying message subset by a finer *content* dimension instead of a
-// structural one, and every resulting node keeps its own `messages` so
-// it can be drilled again.
+// --- content-dimension drilling, once the real folder tree bottoms out ---
+// Each further click regroups the same message subset by a finer
+// content dimension instead of a structural one; every resulting node
+// keeps its own `messages` so it can be drilled again.
 
-// After a folder-tree leaf (currentDimension === null) the next level is
-// whichever dimension "Group by" is currently set to - so drilling
-// shows the same breakdown the treemap is already colored by, not an
-// unrelated fixed one. After that: sender, then "message" - the actual
-// bottom of this data (one cell per email) - then terminal.
+// After a folder leaf, the next level is whichever dimension Group-by
+// is set to. "year" gets one extra hop first - "month" - since a year
+// alone is fairly coarse. After that (or after any other starting
+// dimension): sender, then "message" (one cell per email), then
+// terminal.
 function nextDimension(currentDimension, groupBy) {
   if (currentDimension === null || currentDimension === undefined) return groupBy;
+  if (currentDimension === "year") return "month";
   if (currentDimension === "sender") return "message";
   if (currentDimension === "message") return null;
   return "sender";
 }
 
-// The key a single message groups under for a given dimension. Tag
-// grouping uses the message's first tag (or "" as the Uncategorized
-// sentinel) rather than every tag it carries, so a drill level is a
-// true partition (each message in exactly one cell) - contrast
-// computeBreakdowns()'s tagBreakdown, which is a non-exclusive tally
-// used only for the tooltip/legend at the folder level. "message" uses
-// the message's own id, unique per message by construction - a message
-// dimension's groups are always singletons.
+// The key a message groups under for a dimension. "tag" uses only the
+// message's first tag (so a level is a true partition, unlike
+// computeBreakdowns()'s non-exclusive tagBreakdown tally); "message"
+// uses the message's own id, always a singleton group.
 function groupKeyFor(message, dimension, myAddresses) {
   if (dimension === "tag") return (message.tags || [])[0] || "";
   if (dimension === "domain") return senderDomain(message.author) || "(unknown)";
   if (dimension === "addressType") return classifyAddressType(message, myAddresses);
   if (dimension === "sender") return message.author || "(unknown)";
+  if (dimension === "year") return messageYear(message);
+  if (dimension === "month") return message.date ? MONTH_NAMES[new Date(message.date).getMonth()] : "(unknown)";
   if (dimension === "message") return message.id != null ? String(message.id) : `${message.author}|${message.subject}|${message.date}`;
   return "(unknown)";
 }
 
-// The DISPLAYED text for a group. Only "message" needs the actual
+// The displayed text for a group. Only "message" needs the actual
 // message (its subject) rather than the key alone - `sampleMessage` is
-// any one message from that group (message groups are always
-// singletons, so it's simply that message).
+// any one message from that group (always a singleton for "message").
 function labelForKey(dimension, key, tagLabels, sampleMessage) {
   if (dimension === "tag") return key ? (tagLabels[key] || key) : "Uncategorized";
   if (dimension === "message") return (sampleMessage && sampleMessage.subject) || "(no subject)";
   return key;
 }
 
-// What colorForKey() should actually key off for a group. For every
-// dimension except "message" this is the same string as the label
-// (colorForKey's tag branch looks a label up in tagPalette, which is
-// keyed by display name - not the raw tag key). "message" is the one
-// exception: its label is the subject (unique per cell, useless for
-// coloring), so a message cell colors by its own sender instead -
-// visually clustering one sender's emails by hue even at the bottom
-// level, the same hashColor() a "Sender domain"/sender-level cell uses.
+// What colorForKey() keys off. Same as the label for every dimension
+// except "message": a message's label is its subject (unique, useless
+// for coloring), so it colors by its own sender instead - visually
+// clustering one sender's mail even at the finest level.
 function colorKeyFor(dimension, key, tagLabels, sampleMessage) {
   if (dimension === "message") return (sampleMessage && sampleMessage.author) || "(unknown)";
   return labelForKey(dimension, key, tagLabels);
 }
 
-// A dimension with many distinct groups (hundreds of senders, or every
-// message in a large folder) would otherwise turn into one treemap cell
-// PER group - hundreds of slivers, slow to lay out and useless to look
-// at. Past this many, the smallest groups fold into one "(N more)" node
-// instead of getting a cell each; the biggest count - 1 groups still
-// show individually since those are what's actually worth seeing.
-// "message" gets a much LOWER cap than every other dimension: unlike a
-// domain or sender breakdown (sizes vary, so seeing many is genuinely
-// informative), every individual message has the same count (1) - a
-// wall of 199 identically-tiny tiles reads no better than a wall of 39,
-// it's just slower to lay out and harder to click the right one.
+// Past this many distinct groups, the smallest fold into one "(N
+// more)" node instead of a cell each - otherwise a dimension with
+// hundreds of values turns into hundreds of slivers. "message" gets a
+// much lower cap: every message has the same count (1), so more tiles
+// isn't more informative, just slower to lay out and click through.
 const MAX_GROUP_NODES = 200;
 const MAX_MESSAGE_NODES = 40;
 
@@ -434,32 +384,45 @@ function groupMessages(messages, dimension, tagLabels, myAddresses) {
   return nodes.sort((a, b) => b.count - a.count);
 }
 
-// What refining "go to search" down to one drill node's group should
-// add to the currently active filters. Tag and domain/sender all map
-// onto a real mailTabs.setQuickFilter() facet; address-type and message
-// have none - Thunderbird's quick filter has no "was this a Cc" match
-// (see buildQuickFilterProps) and no "is exactly this one message"
-// match either, so drilling into either can't narrow the search any
-// further than the folder's own current filters.
-function jumpFilterFor(dimension, groupKey) {
+// What refining "go to search" for one drill node's group adds to the
+// active filters. Tag/domain/sender map onto a real
+// mailTabs.setQuickFilter() facet; address-type/year/month don't (no
+// Cc-only or date/age match exists in that API), so drilling into any
+// of them can't narrow the search past the folder's own current
+// filters. "message" falls back to its own sender instead of nothing -
+// a message group is always a singleton, so sampleMessage is right
+// there.
+//
+// domain/sender/message all set `senderOnly: true`: they're computed
+// from a message's author alone, so the search they jump to has to
+// match author only too - otherwise your own address matches almost
+// every message in the account, since you're also the recipient of
+// most of them. buildQuickFilterProps() reads this flag to leave
+// `recipients` out of the search.
+function jumpFilterFor(dimension, groupKey, sampleMessage) {
   if (dimension === "tag") return groupKey ? { tagKeys: [groupKey] } : {};
-  if (dimension === "domain" || dimension === "sender") return { addressText: groupKey };
+  if (dimension === "domain" || dimension === "sender") return { addressText: groupKey, senderOnly: true };
+  if (dimension === "message") {
+    return sampleMessage && sampleMessage.author ? { addressText: sampleMessage.author, senderOnly: true } : {};
+  }
   return {};
 }
 
 // Color for one drill-level node (or a folder-level node's current
-// group, called with `key` already resolved by groupFor) - `key` is
-// always in display-label form, since that's what tagPalette (built
-// from tag display names) is keyed by, and every other dimension's key
-// equals its own label (see colorKeyFor() for the one exception,
-// "message"). A null key (groupMessages()'s overflow "(N more)" node)
-// gets the same muted color as an untagged/empty cell - it isn't a real
-// category, just "everything past the cap".
+// group, called with `key` already resolved by groupFor). A null key
+// (groupMessages()'s overflow "(N more)" node) gets the same muted
+// color as an untagged/empty cell - it isn't a real category.
 function colorForKey(dimension, key, tagPalette) {
   if (key === EMPTY_LABEL || key == null) return "#5a5a57";
-  if (dimension === "domain" || dimension === "sender" || dimension === "message") return hashColor(key);
+  if (dimension === "domain" || dimension === "sender" || dimension === "message" || dimension === "year") return hashColor(key);
   if (dimension === "addressType") {
     const idx = ADDRESS_TYPES.indexOf(key);
+    return idx === -1 ? UNCATEGORIZED_COLOR : PALETTE_ORDER[idx % PALETTE_ORDER.length];
+  }
+  // month is a bounded set of 12, unlike year (open-ended) - a fixed
+  // palette slot per value, same as addressType, rather than a hash.
+  if (dimension === "month") {
+    const idx = MONTH_NAMES.indexOf(key);
     return idx === -1 ? UNCATEGORIZED_COLOR : PALETTE_ORDER[idx % PALETTE_ORDER.length];
   }
   return (tagPalette && tagPalette[key]) || UNCATEGORIZED_COLOR;
@@ -522,23 +485,13 @@ function squarify(inputNodes, x, y, w, h) {
       i++;
     }
     const rowSum = currentRow.reduce((s, n) => s + n.area, 0);
-    // The row's thickness ALONG THE DIMENSION IT CONSUMES: a width when
-    // `wide` (a column eating into cw), a height otherwise (a band
-    // eating into ch) - the opposite of `length` above, which is the
-    // FIXED perpendicular side used only for worst()'s scoring. An
-    // earlier version of this function conflated the two - it correctly
-    // used the shorter side for `length`/scoring, but then reused
-    // `wide`'s condition backwards for the actual layout (building a
-    // full-width band whenever wide==true instead of a full-height
-    // column), which - self-consistently, so no test caught it with
-    // simple 2-3-node cases - produced a real column/band every row but
-    // always the WRONG orientation for the container's own shape. Once
-    // one side starts shrinking, that self-reinforces (the container
-    // gets progressively more lopsided in the same direction every
-    // iteration), degenerating into a single-item-per-row stack with
-    // grotesque aspect ratios on any real, more-than-a-few-items,
-    // non-square dataset - exactly what surfaced live in Thunderbird,
-    // not in the unit tests. See "squarify orientation" test below.
+    // Thickness along the dimension this row CONSUMES: a width when
+    // `wide` (eating into cw), a height otherwise (eating into ch) -
+    // the opposite of `length` above, which is the fixed perpendicular
+    // side used only for scoring. Mixing these two up produces a real
+    // row every time, just oriented wrong for the container's own
+    // shape - self-consistent enough that simple 2-3-node tests won't
+    // catch it, but it degenerates badly on a real, many-item dataset.
     const rowThickness = wide ? rowSum / ch : rowSum / cw;
     layoutRow(currentRow, wide, cx, cy, wide ? rowThickness : cw, wide ? ch : rowThickness);
     if (wide) { cx += rowThickness; cw -= rowThickness; }
@@ -562,13 +515,25 @@ function buildQuickFilterProps(filters) {
     props.tags = { mode: "any", tags };
   }
   if (addressText) {
-    // author (From) + recipients (To/Cc/Bcc combined) together, so the
-    // real search view matches the same From-or-To-or-Cc-or-Bcc scope
-    // applyFilters() already used to build the treemap itself.
-    props.text = { text: addressText, author: true, recipients: true };
+    // Default (the free-text address filter bar): author + recipients
+    // together, matching applyFilters()'s own From/To/Cc/Bcc scope.
+    // `senderOnly` (set by jumpFilterFor() for domain/sender/message)
+    // drops recipients instead - see there for why.
+    props.text = { text: addressText, author: true, recipients: !filters.senderOnly };
   }
   props.show = Object.keys(props).length > 0;
   return props;
+}
+
+// A cheap fingerprint of exactly which messages are present - length
+// alone can't tell one message being added apart from a different one
+// being removed at the same total count.
+function messageSignature(messages) {
+  return messages.map((m) => m.id).sort().join(",");
+}
+
+function cacheKeyFor(accountId) {
+  return `msgCache:${accountId}`;
 }
 
 // --- the real boundaries: reading mail, and jumping to a search view. -----
@@ -591,13 +556,9 @@ async function realListTags() {
   return map;
 }
 async function realListAccounts() {
-  // The boolean asks Thunderbird to populate each account's
-  // rootFolder.subFolders recursively (nested, not flat) - this is the
-  // real folder tree buildFolderTree() drills through. It does NOT
-  // control identities (verified against webextension-api.thunderbird.net
-  // - an earlier version of this comment claimed otherwise): every
-  // MailAccount always carries its own `identities`, used for
-  // myAddresses regardless of this flag.
+  // true populates rootFolder.subFolders recursively - the real folder
+  // tree buildFolderTree() drills through. Identities are always
+  // present on every account regardless of this flag.
   return messenger.accounts.list(true);
 }
 
@@ -618,10 +579,39 @@ async function realOpenFolderSearch(folderId, filters) {
   await messenger.mailTabs.setQuickFilter(jumpTabId, buildQuickFilterProps(filters));
 }
 
+// Per-account cache of the last fetched messages/tags, so reopening
+// the view (or switching back to an account already seen this
+// Thunderbird session) can show something instantly instead of waiting
+// on a full re-fetch - loadData() shows this first, if present, then
+// quietly re-fetches for real and only re-renders if anything actually
+// changed (see messageSignature()). Caching is an optimization, not a
+// requirement, so a storage failure (quota, disabled) just means no
+// instant view this time, not a broken one.
+async function realReadCache(accountId) {
+  try {
+    const key = cacheKeyFor(accountId);
+    const stored = await browser.storage.local.get(key);
+    return stored[key] || null;
+  } catch (e) {
+    return null;
+  }
+}
+async function realWriteCache(accountId, messages, tagLabels) {
+  try {
+    await browser.storage.local.set({
+      [cacheKeyFor(accountId)]: { messages, tagLabels, fetchedAt: Date.now() },
+    });
+  } catch (e) {
+    // ignored - see comment above
+  }
+}
+
 let queryAllMessagesImpl = realQueryAllMessages;
 let listTagsImpl = realListTags;
 let listAccountsImpl = realListAccounts;
 let openFolderSearchImpl = realOpenFolderSearch;
+let readCacheImpl = realReadCache;
+let writeCacheImpl = realWriteCache;
 
 // --- DOM wiring (real extension page only) ------------------------------
 
@@ -636,28 +626,27 @@ function initUi() {
   const addressInput = document.getElementById("address-filter");
   const filterCountEl = document.getElementById("filter-count");
   const clearFiltersBtn = document.getElementById("clear-filters");
+  const hideSentByMeBtn = document.getElementById("hide-sent-by-me");
   const groupByEls = {
     tag: document.getElementById("group-tag"),
     domain: document.getElementById("group-domain"),
     addressType: document.getElementById("group-address-type"),
+    year: document.getElementById("group-year"),
   };
   const depthValueEl = document.getElementById("depth-value");
 
   let sizeMode = "count";
   let groupBy = "tag";
-  // True until the user explicitly clicks a Group-by button - lets
-  // loadData() pick a sensible default per account (see there) without
-  // ever overriding a choice the user actually made. Set false inside
-  // setGroupBy().
+  // True until the user explicitly picks a Group-by - lets loadData()
+  // choose a sensible default per account without overriding a real
+  // choice the user already made.
   let groupByAutoPicked = true;
-  // How many levels to show NESTED at once, starting from the current
-  // stack's top level - depth 1 reproduces the original click-per-level
-  // behavior exactly; anything higher draws each level's children
-  // inside their own parent's cell (see layoutTree()), the way real
-  // SequoiaView shows several levels of a directory tree in one static
-  // picture rather than forcing a click per level. Clicking a cell
-  // always still drills the stack forward by one step regardless of
-  // depth - depth only changes how much is visible without clicking.
+  // How many levels to show nested at once from the current stack top.
+  // 1 is click-per-level; higher inline-expands each cell's children
+  // inside it (layoutTree()). Clicking still drills one step forward
+  // regardless of depth. MAX_DEPTH (6) covers folder(s) -> Group-by ->
+  // sender -> message; "Max" jumps straight there.
+  const MAX_DEPTH = 6;
   let depth = 2;
   let stack = [];
   let accounts = [];
@@ -666,28 +655,22 @@ function initUi() {
   let tagLabels = {};
   let myAddresses = [];
   let selectedTagKeys = new Set();
-  // Set by background.js's folder-pane context menu entry
-  // ("Open in Cussijn Tree View" -> cussijn.html?folder=<id>") so the
-  // view opens already drilled into the folder that was right-clicked,
-  // instead of always landing on the full "All folders" level - and,
-  // via accountIdFromFolderId() in loadAccounts(), also picks the RIGHT
-  // account. Consumed once, by the first rebuild() after load (which
-  // also strips it back out of the visible address bar via
-  // history.replaceState() - a raw internal id like
-  // ?folder=account4%3A%2F%2FINBOX has no business staying on display
-  // once it's done its job) - a later manual refresh or filter change
-  // starts back over at the folder level like any other.
+  let hideSentByMe = false;
+  // Set by background.js's folder-pane entry (?folder=<id>) so the
+  // view opens already drilled into that folder and account. Consumed
+  // once by the first rebuild(), which also strips it back out of the
+  // visible address bar.
   let pendingFolderId = new URLSearchParams(location.search).get("folder");
 
   function fmtSize(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : mb.toFixed(1) + " MB"; }
 
   function currentFilters() {
-    return { tagKeys: [...selectedTagKeys], addressText: addressInput.value };
+    return { tagKeys: [...selectedTagKeys], addressText: addressInput.value, hideSentByMe };
   }
 
   function filterCount() {
     const f = currentFilters();
-    return f.tagKeys.length + (f.addressText.trim() ? 1 : 0);
+    return f.tagKeys.length + (f.addressText.trim() ? 1 : 0) + (f.hideSentByMe ? 1 : 0);
   }
 
   async function loadAccounts() {
@@ -700,11 +683,8 @@ function initUi() {
       accountSelect.appendChild(opt);
     }
     if (accounts.length) {
-      // A folder-pane deep link (?folder=<id>) names the account it
-      // belongs to via the folder id itself - honor that instead of
-      // always defaulting to the first account, or a folder deep-linked
-      // from a non-first account would silently show that first
-      // account's unrelated data instead (see accountIdFromFolderId()).
+      // A deep-linked folder names its own account via the folder id
+      // itself - honor that over defaulting to the first account.
       const pendingAccountId = accountIdFromFolderId(pendingFolderId);
       const chosen = (pendingAccountId && accounts.find((a) => a.id === pendingAccountId)) || accounts[0];
       currentAccountId = chosen.id;
@@ -713,68 +693,89 @@ function initUi() {
     }
   }
 
+  // An account with no Thunderbird tags at all (e.g. Gmail via IMAP)
+  // would render every cell the same muted gray under Group-by: Tag -
+  // default to Sender domain instead, without overriding a Group-by
+  // the user actually picked. Also relabel the button "Label" for such
+  // an account: Gmail's own labels are a different, folder-based
+  // concept (already surfaced as real folders by buildFolderTree()),
+  // so "Tag" is the wrong word here.
+  function applyAutoGroupBy() {
+    const anyTagged = allMessages.some((m) => (m.tags || []).length > 0);
+    groupByEls.tag.textContent = anyTagged ? "Tag" : "Label";
+    if (groupByAutoPicked) {
+      const preferred = anyTagged ? "tag" : "domain";
+      if (groupBy !== preferred) {
+        groupBy = preferred;
+        for (const [key, el] of Object.entries(groupByEls)) el.classList.toggle("active", key === preferred);
+      }
+    }
+  }
+
+  // Stale-while-revalidate: shows a cached account instantly if one
+  // exists (readCacheImpl(), browser.storage.local), then fetches for
+  // real in the background and only re-renders if anything actually
+  // changed - so reopening the view on an account you've already
+  // loaded this session doesn't reset an in-progress drill-down for no
+  // reason.
   async function loadData() {
-    statusEl.textContent = "Loading...";
-    statusEl.hidden = false;
+    const accountId = currentAccountId;
+    const cached = await readCacheImpl(accountId);
+    if (cached) {
+      allMessages = cached.messages;
+      tagLabels = cached.tagLabels;
+      renderTagFilterChips();
+      applyAutoGroupBy();
+      rebuild();
+      statusEl.hidden = true;
+    } else {
+      statusEl.textContent = "Loading...";
+      statusEl.hidden = false;
+    }
+
     try {
       const [messages, labels] = await Promise.all([
-        queryAllMessagesImpl(currentAccountId),
+        queryAllMessagesImpl(accountId),
         listTagsImpl(),
       ]);
+      if (accountId !== currentAccountId) return; // switched accounts again while this was in flight
+
+      writeCacheImpl(accountId, messages, labels); // fire-and-forget
+
+      const unchanged = cached
+        && messages.length === cached.messages.length
+        && messageSignature(messages) === messageSignature(cached.messages)
+        && JSON.stringify(labels) === JSON.stringify(cached.tagLabels);
+      if (unchanged) return;
+
       allMessages = messages;
       tagLabels = labels;
       renderTagFilterChips();
-
-      // Coloring by Tag when an account has no tagged messages at all
-      // (e.g. a Gmail account via IMAP, where Thunderbird's own tags
-      // just don't apply - found live) renders every cell the same
-      // muted Uncategorized gray: technically correct, but useless as
-      // a picture. Default to Sender domain instead for such an
-      // account - still switchable by hand, and never overrides a
-      // Group-by the user actually clicked (see groupByAutoPicked).
-      const anyTagged = allMessages.some((m) => (m.tags || []).length > 0);
-      // Gmail (via IMAP) has no Thunderbird tags at all - what Gmail
-      // itself calls "labels" are a completely different, folder-based
-      // concept (each label is a real IMAP folder Thunderbird already
-      // surfaces via buildFolderTree() - see CLAUDE.md; the treemap
-      // already drills into a Gmail account's labels as real folders,
-      // nothing new needed there). "Tag" as a button label is just the
-      // wrong word for an account like that - rename it to "Label",
-      // independent of whether groupByAutoPicked also switched the
-      // active mode away from it.
-      groupByEls.tag.textContent = anyTagged ? "Tag" : "Label";
-      if (groupByAutoPicked) {
-        const preferred = anyTagged ? "tag" : "domain";
-        if (groupBy !== preferred) {
-          groupBy = preferred;
-          for (const [key, el] of Object.entries(groupByEls)) el.classList.toggle("active", key === preferred);
-        }
-      }
-
+      applyAutoGroupBy();
       rebuild();
       statusEl.hidden = true;
     } catch (e) {
-      statusEl.hidden = false;
-      statusEl.textContent = "Error: " + ((e && e.message) || e);
+      if (!cached) {
+        statusEl.hidden = false;
+        statusEl.textContent = "Error: " + ((e && e.message) || e);
+      } // else: keep showing the cached view rather than replace it with an error
     }
   }
 
   function rebuild() {
-    const filtered = applyFilters(allMessages, currentFilters());
+    const filtered = applyFilters(allMessages, currentFilters(), myAddresses);
     const account = accounts.find((a) => a.id === currentAccountId);
     const nodes = account ? buildFolderTree(account.rootFolder, filtered, tagLabels, myAddresses) : [];
-    // A groupBy/filter change starts back over at the folder level -
-    // any drill-down was into the previous nodes, which no longer exist.
+    // A groupBy/filter change starts over at the folder level - the
+    // previous drill-down was into nodes that no longer exist.
     stack = [{ label: "All folders", nodes: withValue(nodes) }];
     updateFilterUi();
     if (pendingFolderId) {
       const path = findFolderPath(stack[0].nodes, pendingFolderId);
       pendingFolderId = null;
-      // The account/folder id has already done its job (picking the
-      // account in loadAccounts(), drilling below) - strip it from the
-      // visible address bar rather than leaving a raw internal id like
-      // ?folder=account4%3A%2F%2FINBOX on display. Doesn't affect
-      // anything: nothing else re-reads location.search after startup.
+      // Already done its job (picking the account, drilling below) -
+      // strip it from the visible address bar rather than leaving a
+      // raw internal id on display.
       if (typeof history !== "undefined" && history.replaceState) {
         history.replaceState(null, "", location.pathname);
       }
@@ -823,26 +824,23 @@ function initUi() {
     filterCountEl.hidden = count === 0;
     filterCountEl.textContent = `${count} active`;
     clearFiltersBtn.hidden = count === 0;
+    hideSentByMeBtn.classList.toggle("active", hideSentByMe);
   }
 
   // What one more level of drill-down looks like for a node, without
-  // touching the stack - shared by drillInto() (a click, pushed onto the
-  // stack) and layoutTree()'s inline "show N levels at once" expansion,
-  // so both agree on exactly what's "inside" a given cell.
+  // touching the stack - shared by drillInto() (a click, pushed onto
+  // the stack) and layoutTree()'s inline "show N levels at once"
+  // expansion, so both agree on exactly what's "inside" a given cell.
   function nextLevelNodes(n) {
     if (n.dimension === "folder" && n.children && n.children.length) {
-      // A real folder with real subfolders (or the synthetic "(direct in
-      // this folder)" entry alongside them) - drill structurally, into
-      // Thunderbird's own folder tree, exactly like opening a
-      // subdirectory in real SequoiaView. This can recurse arbitrarily
-      // deep, following whatever the account's own folder nesting is,
-      // not a fixed number of levels.
+      // A real folder with real subfolders (or the synthetic "(direct
+      // in this folder)" entry) - drill structurally, arbitrarily
+      // deep, following the account's own folder nesting.
       return withValue(n.children.map((c) => ({ ...c })));
     }
 
-    // A leaf folder (no real subfolders left) or a content-dimension
-    // node: regroup its own messages one step finer instead - see the
-    // comment above nextDimension().
+    // A leaf folder or a content-dimension node: regroup its own
+    // messages one step finer - see the comment above nextDimension().
     const currentDim = n.dimension === "folder" ? null : n.dimension;
     const next = nextDimension(currentDim, groupBy);
     if (!next || !n.messages || !n.messages.length) return [];
@@ -851,20 +849,25 @@ function initUi() {
     return withValue(grouped).map((g) => ({
       ...g,
       folderId: n.folderId, // "go to search" always targets the folder we're inside
-      // Refines the filters already active, rather than replacing them -
-      // drilling into one domain should narrow, not lose, an active tag
-      // filter.
-      jumpFilter: { ...currentFilters(), ...jumpFilterFor(next, g.groupKey) },
+      // Refines the active filters rather than replacing them -
+      // drilling into one domain should narrow, not lose, an active
+      // tag filter.
+      jumpFilter: { ...currentFilters(), ...jumpFilterFor(next, g.groupKey, g.messages[0]) },
     }));
   }
 
-  // Gaps left around a cell's own edge when its children are drawn
-  // nested inside it, and the minimum size a cell needs before it's
-  // worth expanding further - below this it'd just be unreadable
-  // slivers, so it stays collapsed (still drillable by a click).
+  // Gap around a cell's edge when its children are drawn nested inside
+  // it, and the minimum size worth expanding into - below this it'd
+  // just be unreadable slivers, so it stays collapsed (still drillable
+  // by a click).
   const NEST_INSET = 6;
   const MIN_EXPANDABLE_W = 70;
-  const MIN_EXPANDABLE_H = 50;
+  const MIN_EXPANDABLE_H = 64; // must leave room for HEADER_H too
+  // A container's own label bar, reserved above its nested children -
+  // otherwise, once several containers are expanded inline at once
+  // (several years, each showing its own months), there's no way to
+  // tell which cluster of children belongs to which container.
+  const HEADER_H = 17;
 
   // Squarifies `nodes` into [x,y,w,h] and, for any cell with
   // `levelsLeft` > 1 and children, recurses INTO that cell's own
@@ -877,20 +880,26 @@ function initUi() {
     const rects = squarify(nodes.filter((n) => n.value > 0), x, y, w, h);
     const out = [];
     for (const r of rects) {
-      // Never auto-expand FROM sender level INTO individual messages via
-      // Depth - a sender can have hundreds of messages, all the same
-      // size (count 1 each), so inline-expanding them produces one huge
-      // near-blank "(N more)" overflow cell plus a wall of same-size
-      // tiles: no more informative than the sender cell alone, and much
-      // slower to lay out. Message-level detail stays a deliberate click
-      // (drillInto()) regardless of how high Depth is set.
-      const canExpand = levelsLeft > 1 && r.node.dimension !== "sender"
+      // Never auto-expand sender level into individual messages via
+      // Depth - every message has count 1, so it's a wall of
+      // same-size tiles, not informative. Month gets the same
+      // treatment: it's meant to be the max automatic step in the
+      // Year -> Month breakdown. Either way, an explicit click can
+      // still go further (drillInto()).
+      const canExpand = levelsLeft > 1 && r.node.dimension !== "sender" && r.node.dimension !== "month"
         && r.w >= MIN_EXPANDABLE_W && r.h >= MIN_EXPANDABLE_H;
       const kids = canExpand ? nextLevelNodes(r.node) : [];
-      out.push({ node: r.node, x: r.x, y: r.y, w: r.w, h: r.h, depthIndex, hasInlineChildren: kids.length > 0 });
-      if (kids.length) {
+      // A single child is the same 100%-of-area group just relabeled
+      // one dimension finer - conveys nothing new, so only expand
+      // when there's genuinely more than one group to show.
+      const hasInlineChildren = kids.length > 1;
+      out.push({ node: r.node, x: r.x, y: r.y, w: r.w, h: r.h, depthIndex, hasInlineChildren });
+      if (hasInlineChildren) {
+        // The header eats into the top inset only - left/right/bottom
+        // stay a plain NEST_INSET.
         out.push(...layoutTree(
-          kids, r.x + NEST_INSET, r.y + NEST_INSET, r.w - NEST_INSET * 2, r.h - NEST_INSET * 2,
+          kids, r.x + NEST_INSET, r.y + NEST_INSET + HEADER_H,
+          r.w - NEST_INSET * 2, r.h - NEST_INSET * 2 - HEADER_H,
           levelsLeft - 1, depthIndex + 1
         ));
       }
@@ -907,7 +916,7 @@ function initUi() {
     treemapEl.innerHTML = "";
     for (const entry of flat) {
       const n = entry.node;
-      // Folder-level nodes still carry all three switchable breakdowns
+      // Folder-level nodes still carry all four switchable breakdowns
       // (groupFor picks the one Group-by is set to); a drill-level node
       // (from groupMessages) is already a single dimension/key, colored
       // via its own colorKey (see colorKeyFor()).
@@ -924,12 +933,27 @@ function initUi() {
       div.style.height = Math.max(entry.h - 2, 0) + "px";
       if (!isEmpty) div.style.background = colorForKey(dimension, colorGroup, tagPalette);
 
-      // A cell whose children are drawn nested inside it this render
-      // skips its own label/go-btn - they'd sit underneath those
-      // children (later siblings in #treemap paint on top) - real
-      // SequoiaView doesn't label intermediate levels either, relying on
-      // the nesting itself plus hover for identification.
-      if (!entry.hasInlineChildren) {
+      // A container (children drawn inline) gets a slim header instead
+      // of its normal bottom label - layoutTree() reserved HEADER_H of
+      // space above its children for exactly this.
+      if (entry.hasInlineChildren) {
+        const header = document.createElement("div");
+        header.className = "cell-header";
+        const headerLabel = document.createElement("span");
+        headerLabel.className = "cell-header-label";
+        headerLabel.textContent = n.label || folderName(n.path);
+        // Clicking a container still drills into just that one node
+        // (e.g. focus on 2012 alone instead of seeing every year at
+        // once) - always true here, since hasInlineChildren already
+        // means there's more than one group inside. Sits right after
+        // the label in the header's own flex row, not a separately
+        // positioned corner element.
+        const headerHint = document.createElement("span");
+        headerHint.className = "cell-header-hint";
+        headerHint.textContent = "▸";
+        header.append(headerLabel, headerHint);
+        div.appendChild(header);
+      } else {
         const label = document.createElement("div");
         label.className = "cell-label";
         label.textContent = n.label || folderName(n.path);
@@ -942,7 +966,12 @@ function initUi() {
           const goBtn = document.createElement("button");
           goBtn.type = "button";
           goBtn.className = "go-btn";
-          goBtn.title = "Open this in Thunderbird, with the current filters applied (or just right-click the cell)";
+          // addressType/year/month have no matching Thunderbird quick-filter
+          // facet (see jumpFilterFor()) - say so up front rather than let it
+          // look broken when this opens the whole folder unfiltered.
+          goBtn.title = NO_SEARCH_FACET.has(dimension)
+            ? "Open this in Thunderbird - Thunderbird has no date/address-type search filter, so this opens the whole folder unless another filter (tag, address) is also active"
+            : "Open this in Thunderbird, with the current filters applied (or just right-click the cell)";
           goBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
           goBtn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -950,16 +979,26 @@ function initUi() {
           });
           div.appendChild(goBtn);
         }
+
+        // A quiet "there's more inside" mark for a cell that isn't
+        // expanded inline (Depth too low, too small, or already a
+        // single-group dead end) but could still be drilled by a
+        // click. Skipped for a true terminal (nextLevelNodes() empty).
+        if (nextLevelNodes(n).length) {
+          const hint = document.createElement("div");
+          hint.className = "drill-hint";
+          hint.textContent = "▸";
+          div.appendChild(hint);
+        }
       }
 
       div.addEventListener("pointermove", (e) => showTooltip(e, n, group, breakdown));
       div.addEventListener("pointerenter", (e) => showTooltip(e, n, group, breakdown));
       div.addEventListener("pointerleave", () => tooltipEl.classList.remove("show"));
       div.addEventListener("click", () => drillInto(n));
-      // Right-click jumps straight to that exact search, the same
-      // action as the hover go-btn - without needing to hover first, and
-      // reachable even on a "container" cell (one with inline children)
-      // whose go-btn is hidden this render (see above).
+      // Right-click jumps straight to that exact search, same as the
+      // hover go-btn - reachable even on a container cell, whose
+      // go-btn is hidden this render.
       div.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         if (n.folderId) openFolderSearchImpl(n.folderId, n.jumpFilter || currentFilters());
@@ -1016,14 +1055,18 @@ function initUi() {
   function drillInto(n) {
     const nodes = nextLevelNodes(n);
     if (!nodes.length) return;
-    stack.push({ label: n.label || folderName(n.path), nodes });
+    // `source` is the node this level was drilled from - lets
+    // setGroupBy() recompute it later if Group-by changes.
+    stack.push({ label: n.label || folderName(n.path), nodes, source: n });
     render();
   }
 
   function renderBreadcrumb() {
     breadcrumbEl.innerHTML = "";
+    // No separate "›" between levels - each button is its own
+    // arrow-shaped chip (see the .breadcrumb CSS), interlocking into
+    // one ribbon on its own.
     stack.forEach((level, i) => {
-      if (i > 0) breadcrumbEl.appendChild(document.createTextNode(" › "));
       const btn = document.createElement("button");
       btn.textContent = level.label;
       btn.addEventListener("click", () => { stack = stack.slice(0, i + 1); render(); });
@@ -1034,34 +1077,36 @@ function initUi() {
   function renderLegend(nodes) {
     legendEl.innerHTML = "";
     // Every node at a given render shares one level, so one dimension
-    // covers the whole legend: the active Group-by at the folder level,
-    // or whatever dimension the current drill level regrouped by. At
-    // "message" level every group is a singleton (one row per email) -
-    // a legend there would be one entry per message, not a legend -
-    // hover each cell's tooltip instead.
+    // covers the whole legend. At "message" level every group is a
+    // singleton (one row per email) - hover each cell's tooltip
+    // instead of a legend there.
     if (nodes.length && nodes[0].dimension === "message") return;
     const dimension = nodes.length && nodes[0].dimension !== "folder" ? nodes[0].dimension : groupBy;
     // Keyed by the DISPLAYED label (deduplicated), valued by what
-    // actually colors it - normally the same string, but groupMessages()'s
-    // overflow "(N more)" node has a null colorKey (a fixed muted color,
-    // not a real category) and a very much non-null label.
+    // actually colors it - normally the same string, but
+    // groupMessages()'s overflow "(N more)" node has a null colorKey -
+    // plus a running message-count total, since several folder-level
+    // nodes can share the same dominant group and need to add up rather
+    // than the last one just overwriting the count.
     const seen = new Map();
     for (const n of nodes) {
       if (n.dimension === "folder") {
         const { group } = groupFor(n, groupBy);
-        seen.set(group, group);
+        const prev = seen.get(group);
+        seen.set(group, { colorKey: group, count: (prev ? prev.count : 0) + n.count });
       } else {
-        seen.set(n.label, n.colorKey);
+        const prev = seen.get(n.label);
+        seen.set(n.label, { colorKey: n.colorKey, count: (prev ? prev.count : 0) + n.count });
       }
     }
-    for (const [label, colorKey] of seen) {
+    for (const [label, { colorKey, count }] of seen) {
       const item = document.createElement("div");
       item.className = "item";
       const sw = document.createElement("div");
       sw.className = "swatch";
       sw.style.background = label === EMPTY_LABEL ? "var(--grid)" : colorForKey(dimension, colorKey, tagPalette);
       const labelEl = document.createElement("span");
-      labelEl.textContent = label;
+      labelEl.textContent = `${label} (${count})`;
       item.append(sw, labelEl);
       legendEl.appendChild(item);
     }
@@ -1071,7 +1116,19 @@ function initUi() {
     groupByAutoPicked = false; // the user just made an explicit choice - loadData() stops overriding it
     groupBy = mode;
     for (const [key, el] of Object.entries(groupByEls)) el.classList.toggle("active", key === mode);
-    rebuild();
+    // Re-render in place rather than rebuild(): switching Group-by only
+    // changes how already-computed nodes are colored/grouped, not
+    // which messages exist (a filter change does, hence rebuild()
+    // there). A content-dimension level already on the stack (a folder
+    // leaf regrouped by whichever Group-by was active at drill time) is
+    // baked with that old dimension though - recompute every level from
+    // its own `source` node so it follows the new one too. A no-op for
+    // real folder-tree levels, whose nodes don't depend on Group-by.
+    for (let i = 1; i < stack.length; i++) {
+      if (stack[i].source) stack[i] = { ...stack[i], nodes: nextLevelNodes(stack[i].source) };
+    }
+    if (stack.length) render();
+    else rebuild();
   }
 
   document.getElementById("mode-count").addEventListener("click", (e) => {
@@ -1089,11 +1146,17 @@ function initUi() {
   groupByEls.tag.addEventListener("click", () => setGroupBy("tag"));
   groupByEls.domain.addEventListener("click", () => setGroupBy("domain"));
   groupByEls.addressType.addEventListener("click", () => setGroupBy("addressType"));
+  groupByEls.year.addEventListener("click", () => setGroupBy("year"));
+  hideSentByMeBtn.addEventListener("click", () => {
+    hideSentByMe = !hideSentByMe;
+    rebuild();
+  });
   function setDepth(d) {
-    depth = Math.max(1, Math.min(6, d)); // 6 comfortably covers folder(s) -> Group-by -> sender -> message
+    depth = Math.max(1, Math.min(MAX_DEPTH, d));
     depthValueEl.textContent = String(depth);
     render(); // depth only changes what's already-loaded data renders as - no re-fetch needed
   }
+  document.getElementById("depth-max").addEventListener("click", () => setDepth(MAX_DEPTH));
   document.getElementById("depth-minus").addEventListener("click", () => setDepth(depth - 1));
   document.getElementById("depth-plus").addEventListener("click", () => setDepth(depth + 1));
   document.getElementById("refresh").addEventListener("click", loadData);
@@ -1105,6 +1168,7 @@ function initUi() {
   clearFiltersBtn.addEventListener("click", () => {
     selectedTagKeys.clear();
     addressInput.value = "";
+    hideSentByMe = false;
     for (const chip of tagFiltersEl.querySelectorAll(".chip")) {
       chip.classList.remove("selected");
       chip.style.background = "";
@@ -1130,15 +1194,21 @@ if (typeof module !== "undefined" && module.exports) {
     buildQuickFilterProps,
     senderDomain,
     classifyAddressType,
+    isSentByMe,
+    messageYear,
     hashColor,
     nextDimension,
     groupMessages,
     jumpFilterFor,
     colorForKey,
+    messageSignature,
+    cacheKeyFor,
     __setQueryAllMessagesImplForTests: (fn) => { queryAllMessagesImpl = fn; },
     __setListTagsImplForTests: (fn) => { listTagsImpl = fn; },
     __setListAccountsImplForTests: (fn) => { listAccountsImpl = fn; },
     __setOpenFolderSearchImplForTests: (fn) => { openFolderSearchImpl = fn; },
+    __setReadCacheImplForTests: (fn) => { readCacheImpl = fn; },
+    __setWriteCacheImplForTests: (fn) => { writeCacheImpl = fn; },
   };
 } else {
   initUi();

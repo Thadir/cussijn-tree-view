@@ -34,14 +34,11 @@ There's no native-messaging host to set up - just the add-on itself:
 1. Build (or download) `cussijn-tree-view.xpi` - see "Build & test" below.
 2. In Thunderbird: **Menu -> Add-ons and Themes** (Ctrl+Shift+A) -> gear
    icon -> **Install Add-on From File...** -> pick the `.xpi`.
-3. The new **Cussijn Tree View** button appears in the toolbar (customize
-   the toolbar to add it if it isn't visible yet).
 
 ## Opening it
 
-Four ways in, all landing on the same view:
+Three ways in, all landing on the same view:
 
-- **The toolbar button.**
 - **A keyboard shortcut** - `Ctrl+Shift+Y` by default, remappable in
   Add-ons Manager's gear menu -> **Manage Extension Shortcuts**.
 - **Tools menu -> "Cussijn Tree View."**
@@ -64,13 +61,16 @@ three.)
 - **Group by** switches what determines a rectangle's *color* -
   **Tag**, **Sender domain** (each domain gets its own automatically
   and stably assigned color, not re-randomized every time you open it),
-  or **To / Cc / Bcc** (how you personally were addressed on each
-  message, using your account's own identity addresses).
+  **To / Cc / Bcc** (how you personally were addressed on each message,
+  using your account's own identity addresses), or **Year** (drills one
+  extra level into **Month** before continuing to sender).
 - **Filter**: tag chips are OR'd together (pick several tags, match
   any of them); the address box matches a domain or address anywhere
   in From, To, Cc, or Bcc - so filtering by `paypal.com` catches it
-  whether PayPal is the sender or just Cc'd. A tag selection and an
-  address filter combine with AND. **Clear** resets both.
+  whether PayPal is the sender or just Cc'd; **Hide sent by me** drops
+  your own replies (useful on Gmail, where "All Mail" includes sent
+  mail by IMAP definition, not just what you received). All active
+  filters combine with AND. **Clear** resets them all.
 - **Hover** a rectangle for its exact message count, size, and a
   breakdown of whichever dimension is currently grouping the view (or,
   for a single email, its sender/date/size).
@@ -100,22 +100,26 @@ three.)
      featureless "(N more)" block; click into a sender to see its
      messages instead.
 
-  A cell with its own nested children skips its own label (real
-  SequoiaView doesn't label intermediate levels either - hover it for
-  its name); only the deepest cells shown get a text label. A very
-  large group (hundreds of senders or domains) folds its smallest
-  entries into one "(N more)" cell rather than drawing hundreds of
-  slivers - individual messages fold much sooner than other dimensions,
-  since a wall of same-size message tiles adds little past the first
-  few dozen.
+  A cell with its own nested children keeps a slim header labeling
+  itself (with its own `▸` mark - clicking it still drills into just
+  that one node) rather than the normal bottom label; a cell that looks
+  flat but could still be drilled further (Depth too low, too small, or
+  its color happens to match its next level's dominant one) gets the
+  same `▸` mark near its own corner as a hint. A very large group
+  (hundreds of senders or domains) folds its smallest entries into one
+  "(N more)" cell rather than drawing hundreds of slivers - individual
+  messages fold much sooner than other dimensions, since a wall of
+  same-size message tiles adds little past the first few dozen. "Max"
+  jumps Depth straight to its highest useful value in one click.
 
   **Click** any cell, at any depth, to drill the *whole view* one step
   further in - starting from that cell instead of "All folders," and
   nesting up to `Depth` levels below IT. The breadcrumb at the top shows
   the real path you've drilled - actual folder names first, then the
   content breakdown - and lets you climb back to any level; switching
-  account, filters, or Group by starts back over at the folder level
-  (Depth itself doesn't reset - it's independent of where you are).
+  account or filters starts back over at the folder level, but
+  switching Group by doesn't - it just recolors/regroups whatever
+  you're already looking at (Depth doesn't reset either way).
 - **Right-click any rectangle** (or the small circular button that
   appears on hovering one) to open a real Thunderbird tab filtered down
   to exactly what that rectangle represents - a live quick filter
@@ -128,10 +132,13 @@ three.)
 - **Refresh** re-reads the current account; the account picker switches
   between your configured Thunderbird accounts.
 
-One honest limitation: Thunderbird's own quick filter has no CC-only
-match, only a combined "recipients" (To+Cc+Bcc) - so the address filter
-and the "jump to search" it opens can't isolate CC specifically from To
-or Bcc.
+Two honest limitations, both because Thunderbird's own quick filter API
+just doesn't have the matching facet: it has no CC-only match, only a
+combined "recipients" (To+Cc+Bcc), so the address filter and the "jump
+to search" it opens can't isolate CC specifically from To or Bcc; and
+it has no date/age match, so jumping to search from a Year, Month, or
+To/Cc/Bcc cell (or with "Hide sent by me" active) can't narrow the
+search beyond whatever tag/address filter is already active.
 
 ## Build & test
 
@@ -258,14 +265,16 @@ itself.
 ## Files
 
 - `extension/manifest.json` - permissions (`accountsRead`,
-  `accountsFolders`, `messagesRead`, `messagesTags`, `menus` - all
-  read-only or UI-only, no `compose`/`messagesMove`/`messagesDelete`/
-  `messagesUpdate` needed since this never changes anything) and the
-  `commands` keyboard shortcut declaration.
-- `extension/background.js` - tiny: owns the toolbar button, the
-  keyboard shortcut, the Tools-menu entry, and the folder-pane context
-  menu entry, all four opening/focusing the same Cussijn Tree View tab.
-  No dispatch table - see `CLAUDE.md` for why.
+  `accountsFolders`, `messagesRead`, `messagesTags`, `menus`, `storage` -
+  all read-only, UI-only, or local-only, no `compose`/`messagesMove`/
+  `messagesDelete`/`messagesUpdate` needed since this never changes
+  anything; `storage` is `browser.storage.local` for a local per-account
+  cache, nothing leaves the machine) and the `commands` keyboard
+  shortcut declaration.
+- `extension/background.js` - tiny: owns the keyboard shortcut, the
+  Tools-menu entry, and the folder-pane context menu entry, all three
+  opening/focusing the same Cussijn Tree View tab. No dispatch table -
+  see `CLAUDE.md` for why.
 - `extension/cussijn.html` / `cussijn.js` - the treemap itself: data
   loading, the real folder-tree drill-down, the squarified layout
   algorithm, rendering, hover.

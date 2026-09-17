@@ -17,12 +17,12 @@ function freshCussijn() {
 
 const ME = "me@mine.com";
 
-test("computeBreakdowns finds the dominant tag and tallies tag/domain/address-type breakdowns together", () => {
+test("computeBreakdowns finds the dominant tag and tallies tag/domain/address-type/year breakdowns together", () => {
   const { computeBreakdowns } = freshCussijn();
   const messages = [
-    { author: "a@bank.nl", tags: ["$cat_banking"], recipients: [ME] },
-    { author: "a@bank.nl", tags: ["$cat_banking"], recipients: [ME] },
-    { author: "b@other.nl", tags: ["$cat_travel"], ccList: [ME] },
+    { author: "a@bank.nl", tags: ["$cat_banking"], recipients: [ME], date: "2025-03-01" },
+    { author: "a@bank.nl", tags: ["$cat_banking"], recipients: [ME], date: "2025-06-01" },
+    { author: "b@other.nl", tags: ["$cat_travel"], ccList: [ME], date: "2026-01-01" },
   ];
   const b = computeBreakdowns(messages, { $cat_banking: "Banking", $cat_travel: "Travel" }, [ME]);
   assert.equal(b.dominantTag, "Banking");
@@ -30,13 +30,16 @@ test("computeBreakdowns finds the dominant tag and tallies tag/domain/address-ty
   assert.equal(b.dominantDomain, "bank.nl");
   assert.deepEqual(b.domainBreakdown, { "bank.nl": 2, "other.nl": 1 });
   assert.deepEqual(b.addressTypeBreakdown, { "Direct (To)": 2, Cc: 1 });
+  assert.equal(b.dominantYear, "2025");
+  assert.deepEqual(b.yearBreakdown, { "2025": 2, "2026": 1 });
 });
 
-test("computeBreakdowns falls back to Uncategorized/Other with no tags or no known own-address", () => {
+test("computeBreakdowns falls back to Uncategorized/Other/(unknown) with no tags, no known own-address, or no date", () => {
   const { computeBreakdowns } = freshCussijn();
   const b = computeBreakdowns([{ author: "c@gmail.com", tags: [] }], {}, []);
   assert.equal(b.dominantTag, "Uncategorized");
   assert.equal(b.dominantAddressType, "Other");
+  assert.equal(b.dominantYear, "(unknown)");
 });
 
 // A small two-level fixture mirroring accounts.list(true)'s real shape:
@@ -142,6 +145,35 @@ test("classifyAddressType prefers To over Cc over Bcc, falls back to Other", () 
   assert.equal(classifyAddressType({ recipients: [ME] }, []), "Other"); // no known "me" addresses
 });
 
+test("isSentByMe matches the author against the account's own identities", () => {
+  const { isSentByMe } = freshCussijn();
+  assert.equal(isSentByMe({ author: `"Me" <${ME}>` }, [ME]), true);
+  assert.equal(isSentByMe({ author: "other@x.com" }, [ME]), false);
+  assert.equal(isSentByMe({ author: ME }, []), false); // no known "me" addresses
+});
+
+test("messageYear reads the calendar year out of a message's date, falls back to (unknown)", () => {
+  const { messageYear } = freshCussijn();
+  assert.equal(messageYear({ date: "2026-01-15" }), "2026");
+  assert.equal(messageYear({}), "(unknown)");
+});
+
+test("messageSignature is order-independent and changes when the message set actually changes", () => {
+  const { messageSignature } = freshCussijn();
+  const a = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const bSameOrderShuffled = [{ id: 3 }, { id: 1 }, { id: 2 }];
+  assert.equal(messageSignature(a), messageSignature(bSameOrderShuffled));
+
+  const oneSwapped = [{ id: 1 }, { id: 2 }, { id: 4 }]; // same count, different message
+  assert.notEqual(messageSignature(a), messageSignature(oneSwapped));
+});
+
+test("cacheKeyFor namespaces the per-account cache key", () => {
+  const { cacheKeyFor } = freshCussijn();
+  assert.equal(cacheKeyFor("account4"), "msgCache:account4");
+  assert.notEqual(cacheKeyFor("account4"), cacheKeyFor("account5"));
+});
+
 test("senderDomain extracts the domain from a plain or Name<addr> author string", () => {
   const { senderDomain } = freshCussijn();
   assert.equal(senderDomain("service@paypal.nl"), "paypal.nl");
@@ -184,6 +216,18 @@ test("applyFilters' address match spans From, To, Cc and Bcc - not just the send
   assert.equal(result.length, 4);
 });
 
+test("applyFilters' hideSentByMe drops messages the account's own identity authored, needs myAddresses to do anything", () => {
+  const { applyFilters } = freshCussijn();
+  const messages = [
+    { author: `"Me" <${ME}>` },  // my own reply
+    { author: "other@x.com" },   // received
+  ];
+  const filtered = applyFilters(messages, { hideSentByMe: true }, [ME]);
+  assert.deepEqual(filtered, [{ author: "other@x.com" }]);
+  // Without myAddresses there's no "me" to match against - nothing gets hidden.
+  assert.equal(applyFilters(messages, { hideSentByMe: true }).length, 2);
+});
+
 test("buildQuickFilterProps mirrors the same From/To/Cc/Bcc scope applyFilters used", () => {
   const { buildQuickFilterProps } = freshCussijn();
   const props = buildQuickFilterProps({ tagKeys: ["$cat_banking"], addressText: "paypal.com" });
@@ -199,16 +243,27 @@ test("buildQuickFilterProps with nothing active just clears the quick filter", (
   assert.deepEqual(buildQuickFilterProps({}), { show: false });
 });
 
+test("buildQuickFilterProps drops recipients for a senderOnly filter (domain/sender/message jump filters)", () => {
+  const { buildQuickFilterProps } = freshCussijn();
+  const props = buildQuickFilterProps({ addressText: "thadir@gmail.com", senderOnly: true });
+  assert.deepEqual(props, {
+    text: { text: "thadir@gmail.com", author: true, recipients: false },
+    show: true,
+  });
+});
+
 test("groupFor picks the right precomputed dimension", () => {
   const { groupFor } = freshCussijn();
   const node = {
     dominantTag: "Banking", tagBreakdown: { Banking: 3 },
     dominantDomain: "paypal.com", domainBreakdown: { "paypal.com": 3 },
     dominantAddressType: "Direct (To)", addressTypeBreakdown: { "Direct (To)": 3 },
+    dominantYear: "2026", yearBreakdown: { "2026": 3 },
   };
   assert.deepEqual(groupFor(node, "tag"), { group: "Banking", breakdown: { Banking: 3 } });
   assert.deepEqual(groupFor(node, "domain"), { group: "paypal.com", breakdown: { "paypal.com": 3 } });
   assert.deepEqual(groupFor(node, "addressType"), { group: "Direct (To)", breakdown: { "Direct (To)": 3 } });
+  assert.deepEqual(groupFor(node, "year"), { group: "2026", breakdown: { "2026": 3 } });
 });
 
 test("squarify covers the full rectangle and never overlaps", () => {
@@ -261,13 +316,15 @@ test("squarify keeps cells close to square even for skewed values in a wide cont
   }
 });
 
-test("nextDimension: folder -> active Group-by dimension -> sender -> message -> terminal", () => {
+test("nextDimension: folder -> active Group-by dimension -> sender -> message -> terminal, year -> month first", () => {
   const { nextDimension } = freshCussijn();
   assert.equal(nextDimension(null, "domain"), "domain");
   assert.equal(nextDimension(undefined, "tag"), "tag");
   assert.equal(nextDimension("tag", "tag"), "sender");
   assert.equal(nextDimension("domain", "domain"), "sender");
   assert.equal(nextDimension("addressType", "addressType"), "sender");
+  assert.equal(nextDimension("year", "year"), "month"); // year's one extra hop
+  assert.equal(nextDimension("month", "year"), "sender"); // then the chain resumes as usual
   assert.equal(nextDimension("sender", "domain"), "message");
   assert.equal(nextDimension("message", "domain"), null);
 });
@@ -313,6 +370,29 @@ test("groupMessages by sender and address type", () => {
   assert.deepEqual(new Set(addrNodes.map((n) => n.label)), new Set(["Direct (To)", "Cc"]));
 });
 
+test("groupMessages by year partitions by calendar year, colored by hashColor like domain/sender", () => {
+  const { groupMessages } = freshCussijn();
+  const nodes = groupMessages(
+    [{ date: "2025-01-01" }, { date: "2025-06-01" }, { date: "2026-01-01" }],
+    "year", {}, []
+  );
+  const y2025 = nodes.find((n) => n.groupKey === "2025");
+  assert.equal(y2025.count, 2);
+  assert.equal(y2025.label, "2025");
+});
+
+test("groupMessages by month partitions by calendar month name - the extra hop after year", () => {
+  const { groupMessages } = freshCussijn();
+  const nodes = groupMessages(
+    [{ date: "2025-01-05" }, { date: "2025-01-20" }, { date: "2025-06-01" }],
+    "month", {}, []
+  );
+  const jan = nodes.find((n) => n.groupKey === "January");
+  assert.equal(jan.count, 2);
+  assert.equal(jan.label, "January");
+  assert.ok(nodes.some((n) => n.groupKey === "June"));
+});
+
 test("groupMessages by message: one node per email, labeled by subject, colored by its own sender", () => {
   const { groupMessages } = freshCussijn();
   const messages = [
@@ -351,25 +431,43 @@ test("groupMessages caps 'message' groups much lower than other dimensions - eve
   assert.equal(overflow.count, 60 - 39);
 });
 
-test("jumpFilterFor: tag and domain/sender refine the search, addressType and message can't", () => {
+test("jumpFilterFor: tag and domain/sender refine the search, addressType can't - message falls back to its own sender", () => {
   const { jumpFilterFor } = freshCussijn();
   assert.deepEqual(jumpFilterFor("tag", "$cat_banking"), { tagKeys: ["$cat_banking"] });
   assert.deepEqual(jumpFilterFor("tag", ""), {}); // Uncategorized has no tag to filter by
-  assert.deepEqual(jumpFilterFor("domain", "paypal.com"), { addressText: "paypal.com" });
-  assert.deepEqual(jumpFilterFor("sender", "a@x.com"), { addressText: "a@x.com" });
+  // domain/sender/message are computed from a message's author alone, so their
+  // jump filter is marked senderOnly - buildQuickFilterProps() reads this to
+  // search the sender field only, not sender+recipients (see there for why:
+  // your own address as a "sender" bucket would otherwise match nearly every
+  // message in the account, since you're also the recipient of most of them).
+  assert.deepEqual(jumpFilterFor("domain", "paypal.com"), { addressText: "paypal.com", senderOnly: true });
+  assert.deepEqual(jumpFilterFor("sender", "a@x.com"), { addressText: "a@x.com", senderOnly: true });
   assert.deepEqual(jumpFilterFor("addressType", "Cc"), {}); // no CC-only quick filter match
-  assert.deepEqual(jumpFilterFor("message", "1"), {}); // no "is exactly this one message" quick filter match either
+  assert.deepEqual(jumpFilterFor("year", "2026"), {}); // no date/age quick filter match
+  // No "is exactly this one message" quick filter match exists, but a message
+  // group is always a singleton - its own sender is right there, so use that
+  // instead of giving up on narrowing entirely (found live: right-clicking a
+  // drilled-into message opened the folder with no filter at all).
+  assert.deepEqual(
+    jumpFilterFor("message", "1", { author: "Steam <noreply@steampowered.com>" }),
+    { addressText: "Steam <noreply@steampowered.com>", senderOnly: true }
+  );
+  assert.deepEqual(jumpFilterFor("message", "1", null), {});
 });
 
-test("colorForKey: tag looks up the tag palette by label, domain/sender/message hash, addressType uses a fixed slot, null is muted", () => {
+test("colorForKey: tag looks up the tag palette by label, domain/sender/message/year hash, addressType uses a fixed slot, null is muted", () => {
   const { colorForKey } = freshCussijn();
   const tagPalette = { Banking: "#2a78d6" };
   assert.equal(colorForKey("tag", "Banking", tagPalette), "#2a78d6");
   assert.equal(colorForKey("tag", "Unknown", tagPalette), "#898781"); // UNCATEGORIZED_COLOR fallback
   assert.equal(colorForKey("domain", "paypal.com", {}), colorForKey("sender", "paypal.com", {}));
   assert.equal(colorForKey("sender", "paypal.com", {}), colorForKey("message", "paypal.com", {}));
+  assert.equal(colorForKey("year", "2026", {}), colorForKey("domain", "2026", {})); // same hashColor() mechanism
   assert.match(colorForKey("domain", "paypal.com", {}), /^hsl\(/);
   assert.match(colorForKey("addressType", "Cc", {}), /^#[0-9a-f]{6}$/);
+  // month is a bounded set of 12, like addressType - a fixed palette slot, not a hash.
+  assert.match(colorForKey("month", "March", {}), /^#[0-9a-f]{6}$/);
+  assert.notEqual(colorForKey("month", "March", {}), colorForKey("month", "April", {}));
   assert.equal(colorForKey("sender", null, {}), "#5a5a57"); // groupMessages()'s overflow node
 });
 

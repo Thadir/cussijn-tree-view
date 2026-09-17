@@ -1,13 +1,22 @@
 name: Publish to Thunderbird Add-ons
 
-# Fires when release-please.yml's release PR gets merged and it cuts an
-# actual GitHub Release (see the comment in release-please.yml - this is
-# the second half of that two-step flow, not triggered by every push to
-# main). Builds the .xpi from that release's exact tagged commit, attaches
-# it to the GitHub Release as a downloadable asset, then signs and
-# submits it to addons.thunderbird.net (ATN) for review via web-ext,
-# using the kewisch/action-web-ext action (maintained by a Thunderbird
-# add-ons contributor, and the one actually aware of ATN's API quirks).
+# Fires when release.yml's hop 2 cuts an actual GitHub Release (tagging
+# a merged release/vX.Y.Z PR - see the comment at the top of release.yml).
+# Builds the .xpi from that release's exact tagged commit, attaches it to
+# the GitHub Release as a downloadable asset, then signs and submits it
+# to addons.thunderbird.net (ATN) for review via web-ext, using the
+# kewisch/action-web-ext action (maintained by a Thunderbird add-ons
+# contributor, and the one actually aware of ATN's API quirks).
+#
+# Also takes a manual workflow_dispatch with a `tag` input, as a fallback:
+# a release created by release.yml's own hop 2 uses GITHUB_TOKEN, and
+# GitHub's anti-recursion protection means a GITHUB_TOKEN-authored
+# `release: published` event does not reliably trigger other workflows -
+# found live, the same limitation release.yml's own comment already
+# documents for a GITHUB_TOKEN-driven PR merge. When that happens, a
+# human (or Claude, via its own authenticated `gh` session - a real user
+# action, not a workflow's GITHUB_TOKEN) can fire this workflow directly:
+# `gh workflow run publish-thunderbird.yml -f tag=vX.Y.Z`.
 #
 # ATN runs its own instance of the addons-server codebase, separate from
 # addons.mozilla.org, still on the older v4 API (not AMO's v5) and with a
@@ -22,6 +31,11 @@ name: Publish to Thunderbird Add-ons
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v1.0.0) - only needed when the automatic trigger above didn't fire"
+        required: true
 
 permissions:
   contents: write
@@ -29,10 +43,12 @@ permissions:
 jobs:
   build-and-submit:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v7
         with:
@@ -47,7 +63,7 @@ jobs:
       - name: Attach .xpi to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/cussijn-tree-view.xpi --clobber
+        run: gh release upload "$RELEASE_TAG" dist/cussijn-tree-view.xpi --clobber
 
       - name: Lint before submitting
         uses: kewisch/action-web-ext@v2

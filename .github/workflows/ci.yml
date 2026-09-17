@@ -70,12 +70,15 @@ jobs:
           awk "BEGIN{exit !($pct >= 80)}" && color=brightgreen
           awk "BEGIN{exit !($pct >= 50 && $pct < 80)}" && color=yellow
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           rm -rf /tmp/badges-repo
           git clone --branch badges --single-branch "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" /tmp/badges-repo
           printf '{"schemaVersion":1,"label":"line coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > /tmp/badges-repo/coverage-badge.json
           cd /tmp/badges-repo
+          # Identity must be set HERE, inside this freshly cloned repo -
+          # the outer checkout's own git config doesn't carry over to a
+          # separate clone, and `git commit` needs one regardless.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add coverage-badge.json
           git diff --cached --quiet && echo "Coverage unchanged (${pct}%) - nothing to push." && exit 0
           git commit -m "chore: update coverage badge data (${pct}%)"

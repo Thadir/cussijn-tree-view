@@ -275,16 +275,22 @@ ATN accepted a brand-new listing's first version via the API with no
 complaints, but rejected the second with `You cannot add a listed
 version to this addon via the API due to missing metadata. Please
 submit via the website`. Before your second release, fill in the
-add-on's **Description** on the ATN Developer Hub yourself (your
-listing's page -> Add-on Details -> Edit) - this is addon-level
-metadata, not something any manifest key or API call sets, so the
-pipeline can't do it for you. One-time only; every release after that
-should go through automatically.
+listing's details on the ATN Developer Hub yourself: the **Description**
+(Edit Information) and the **Licence** (Manage Authors & Licence, and on
+the version itself) - this is addon-level metadata, not something any
+manifest key or API call sets, so the pipeline can't do it for you.
+One-time only.
+
+ATN's API v4 also takes nothing but the `.xpi` (plus the manifest version
+and channel): no release notes, license or reviewer notes. So for each
+release, paste the version's **Version Notes** into the Developer Hub by
+hand - the publish workflow prints this version's CHANGELOG.md entry in
+its job summary to copy from.
 
 ## License
 
-[MPL-2.0](LICENSE). The same license is declared on the Thunderbird
-Add-ons listing, sent with every submission by `publish-thunderbird.yml`.
+[MPL-2.0](LICENSE). Pick the same license on the Thunderbird Add-ons
+listing (see "Publishing to Thunderbird Add-ons" above).
 
 ## Privacy
 

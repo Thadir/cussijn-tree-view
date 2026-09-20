@@ -65,23 +65,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_TAG" dist/cussijn-tree-view.xpi --clobber
 
-      # ATN's "Version Notes" for this release: the matching CHANGELOG.md
-      # entry, read from the tagged commit. release.yml's hop 1 writes the
-      # entry into the release PR, so it is in the tag.
-      - name: Read this version's release notes from CHANGELOG.md
-        id: notes
+      # ATN's API v4 takes only the .xpi, the manifest version and the
+      # channel - kewisch/action-web-ext refuses release notes, a license
+      # and reviewer notes on it - so the Developer Hub's "Version Notes"
+      # box is filled in by hand. Put this version's CHANGELOG entry in the
+      # job summary so it can be pasted.
+      - name: Show this version's release notes for the Developer Hub
         run: |
-          python3 - "${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT" <<'PY'
+          python3 - "${RELEASE_TAG#v}" >> "$GITHUB_STEP_SUMMARY" <<'PY'
           import re, sys
           version = sys.argv[1]
           text = open("CHANGELOG.md").read()
           m = re.search(rf"^## v{re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
-          notes = m.group(1).split("Entries below")[0].strip() if m else ""
-          if not notes:
-              print(f"::warning::No CHANGELOG.md entry found for v{version}", file=sys.stderr)
-          print("notes<<NOTES_EOF")
+          notes = m.group(1).split("Entries below")[0].strip() if m else "(no CHANGELOG.md entry found)"
+          print("### Version notes for the ATN Developer Hub")
+          print()
+          print("Paste into the version's **Version Notes** box:")
+          print()
           print(notes)
-          print("NOTES_EOF")
           PY
 
       - name: Lint before submitting
@@ -99,11 +100,3 @@ jobs:
           apiUrlPrefix: https://addons.thunderbird.net/api/v4
           apiKey: ${{ secrets.ATN_API_KEY }}
           apiSecret: ${{ secrets.ATN_API_SECRET }}
-          license: MPL-2.0
-          releaseNotes: ${{ steps.notes.outputs.notes }}
-          approvalNotes: >-
-            Plain JavaScript, HTML and CSS with no build step, bundler,
-            minification or dependencies: the .xpi contains the files in
-            extension/ as-is (tests excluded), so no separate source upload
-            is needed. Read-only access to mail via Thunderbird's own APIs;
-            no network requests.

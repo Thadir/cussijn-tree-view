@@ -2,7 +2,11 @@
 
 ## v1.1.0 - minor
 
-From #19.
+Accessibility fixes: the page now declares its language, the account
+picker and address filter are labeled for screen readers, and the
+filter-count badge has enough contrast. Now released under the MPL-2.0
+license. No other behavior changes; the rest of this release is
+internal (more unit tests, a code-quality scan).
 
 ## v1.0.1 - bugfix
 

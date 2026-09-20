@@ -224,27 +224,32 @@ DOM from here.
   auto-merge (squash) once CI passes, via
   `.github/workflows/dependabot-auto-merge.yml`.
 
-### Code quality (SonarQube Cloud)
+### Code quality (SonarQube)
 
-`.github/workflows/sonar.yml` scans `extension/` on every push to `main`
-and every pull request, using `sonar-project.properties`. It's a separate
-workflow from `ci.yml` and isn't a required check, so it can't block a
-merge. Until the token below exists (and on fork/Dependabot PRs, where
-GitHub withholds secrets) it skips itself and passes.
+`./build/sonar.sh` runs the unit tests with coverage, starts a SonarQube
+Community container (podman), scans `extension/` with the config in
+`sonar-project.properties`, and prints the quality gate result, coverage,
+and headline metrics. It leaves the server running so
+you can browse the findings at <http://localhost:9000> (login `admin` /
+`admin`, or set `SONAR_ADMIN_PASSWORD` if you changed it); re-running
+reuses that server, and `./build/sonar.sh stop` removes it. The server
+image needs roughly 2 GB of RAM.
 
-One-time setup, which only you can do:
+`.github/workflows/sonar.yml` runs the same script with docker on every
+push to `main` and every pull request, and puts the result in the job
+summary. The CI server is thrown away with the runner, so there's no
+dashboard there. It's report-only and not a required check, so it can't
+block a merge.
 
-1. Sign in at [sonarcloud.io](https://sonarcloud.io) with GitHub and import
-   this repo. The free tier covers public repos.
-2. In the project's **Administration -> Analysis Method**, turn off
-   **Automatic Analysis** - it can't run alongside the CI scan.
-3. Check that the organization and project key shown there match
-   `sonar.organization` and `sonar.projectKey` in `sonar-project.properties`.
-4. Generate a token (**My Account -> Security**) and add it as the repo
-   Actions secret `SONAR_TOKEN`.
+Coverage is the same whole-file line coverage described under the badge
+above, so it includes `initUi()`'s deliberately untested DOM wiring - and
+Sonar's default gate wants 80% on *new* code, so it reads ERROR whenever a
+change touches that wiring. The gate is informational here.
 
-Unit-test coverage isn't sent to Sonar yet: CI runs Node 20, whose test
-runner has no lcov output.
+A few findings are deliberate and are ignored in
+`sonar-project.properties` with the reason next to each: the intentionally
+swallowed errors, the `void` that handles menus' harmless duplicate-id error,
+and `hashColor()`'s `charCodeAt`.
 
 ### Publishing to Thunderbird Add-ons
 

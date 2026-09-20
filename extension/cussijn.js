@@ -51,7 +51,7 @@ function accountIdFromFolderId(folderId) {
 // arbitrary display name that can collide - e.g. two accounts both
 // just named "Mail").
 function accountDisplayName(account) {
-  const email = account.identities && account.identities[0] && account.identities[0].email;
+  const email = account.identities?.[0]?.email;
   return email || account.name;
 }
 
@@ -201,7 +201,7 @@ function computeBreakdowns(messages, tagLabels, myAddresses) {
 function buildFolderTree(rootFolder, messages, tagLabels, myAddresses) {
   const byFolderId = new Map();
   for (const m of messages) {
-    const id = m.folder && m.folder.id;
+    const id = m.folder?.id;
     if (!id) continue;
     if (!byFolderId.has(id)) byFolderId.set(id, []);
     byFolderId.get(id).push(m);
@@ -252,7 +252,7 @@ function buildFolderTree(rootFolder, messages, tagLabels, myAddresses) {
 function findFolderPath(nodes, folderId) {
   for (const n of nodes) {
     if (n.folderId === folderId) return [n];
-    if (n.children && n.children.length) {
+    if (n.children?.length) {
       const sub = findFolderPath(n.children, folderId);
       if (sub) return [n, ...sub];
     }
@@ -309,7 +309,7 @@ function groupKeyFor(message, dimension, myAddresses) {
 // any one message from that group (always a singleton for "message").
 function labelForKey(dimension, key, tagLabels, sampleMessage) {
   if (dimension === "tag") return key ? (tagLabels[key] || key) : "Uncategorized";
-  if (dimension === "message") return (sampleMessage && sampleMessage.subject) || "(no subject)";
+  if (dimension === "message") return sampleMessage?.subject || "(no subject)";
   return key;
 }
 
@@ -318,7 +318,7 @@ function labelForKey(dimension, key, tagLabels, sampleMessage) {
 // for coloring), so it colors by its own sender instead - visually
 // clustering one sender's mail even at the finest level.
 function colorKeyFor(dimension, key, tagLabels, sampleMessage) {
-  if (dimension === "message") return (sampleMessage && sampleMessage.author) || "(unknown)";
+  if (dimension === "message") return sampleMessage?.author || "(unknown)";
   return labelForKey(dimension, key, tagLabels);
 }
 
@@ -366,7 +366,7 @@ function groupMessages(messages, dimension, tagLabels, myAddresses) {
   });
 
   if (overflow.length) {
-    const restMessages = [].concat(...overflow.map(([, items]) => items));
+    const restMessages = overflow.flatMap(([, items]) => items);
     let sizeBytes = 0;
     for (const m of restMessages) sizeBytes += m.size || 0;
     nodes.push({
@@ -403,7 +403,7 @@ function jumpFilterFor(dimension, groupKey, sampleMessage) {
   if (dimension === "tag") return groupKey ? { tagKeys: [groupKey] } : {};
   if (dimension === "domain" || dimension === "sender") return { addressText: groupKey, senderOnly: true };
   if (dimension === "message") {
-    return sampleMessage && sampleMessage.author ? { addressText: sampleMessage.author, senderOnly: true } : {};
+    return sampleMessage?.author ? { addressText: sampleMessage.author, senderOnly: true } : {};
   }
   return {};
 }
@@ -425,7 +425,16 @@ function colorForKey(dimension, key, tagPalette) {
     const idx = MONTH_NAMES.indexOf(key);
     return idx === -1 ? UNCATEGORIZED_COLOR : PALETTE_ORDER[idx % PALETTE_ORDER.length];
   }
-  return (tagPalette && tagPalette[key]) || UNCATEGORIZED_COLOR;
+  return tagPalette?.[key] || UNCATEGORIZED_COLOR;
+}
+
+// Worst aspect ratio in a candidate row laid along a side of `length`.
+function worst(row, length) {
+  if (!row.length) return Infinity;
+  const sum = row.reduce((s, n) => s + n.area, 0);
+  const maxA = Math.max(...row.map(n => n.area));
+  const minA = Math.min(...row.map(n => n.area));
+  return Math.max((length * length * maxA) / (sum * sum), (sum * sum) / (length * length * minA));
 }
 
 // Squarified treemap layout (Bruls/Huizing/van Wijk). Pure function:
@@ -436,13 +445,6 @@ function squarify(inputNodes, x, y, w, h) {
   const sorted = [...inputNodes].sort((a, b) => b.value - a.value).map(n => ({ ...n, area: n.value * scale }));
   const rects = [];
 
-  function worst(row, length) {
-    if (!row.length) return Infinity;
-    const sum = row.reduce((s, n) => s + n.area, 0);
-    const maxA = Math.max(...row.map(n => n.area));
-    const minA = Math.min(...row.map(n => n.area));
-    return Math.max((length * length * maxA) / (sum * sum), (sum * sum) / (length * length * minA));
-  }
   // A row is always built along the remaining rectangle's SHORTER side -
   // that's what keeps its cells close to square:
   //   wide (rect is wider than tall): the shorter side is the height,
@@ -532,8 +534,126 @@ function messageSignature(messages) {
   return messages.map((m) => m.id).sort().join(",");
 }
 
+// Does a freshly fetched account still match what the cache showed? If so
+// the background refresh must not re-render: rebuild() resets navigation
+// back to "All folders", which would kick the user out of wherever they'd
+// drilled for no reason.
+function cacheMatches(cached, messages, labels) {
+  return cached?.messages.length === messages.length
+    && messageSignature(messages) === messageSignature(cached.messages)
+    && JSON.stringify(labels) === JSON.stringify(cached.tagLabels);
+}
+
+// An account with no Thunderbird tags at all (e.g. Gmail via IMAP) gets a
+// different default Group-by and a "Label" button instead of "Tag".
+function hasAnyTag(messages) {
+  return messages.some((m) => (m.tags || []).length > 0);
+}
+
 function cacheKeyFor(accountId) {
   return `msgCache:${accountId}`;
+}
+
+// Adds the `value` squarify() sizes by: message count or MB. Never zero,
+// or an empty group would vanish from the layout.
+function withSizeValue(nodes, sizeMode) {
+  return nodes.map((n) => ({ ...n, value: (sizeMode === "count" ? n.count : n.size_mb) || 0.01 }));
+}
+
+// What one more level of drill-down looks like for a node, without
+// touching any navigation state - shared by drillInto() (a click) and
+// layoutTree()'s inline "show N levels at once" expansion, so both agree
+// on exactly what's "inside" a given cell.
+//   ctx: { sizeMode, groupBy, tagLabels, myAddresses, filters }
+function nextLevelNodesFor(n, ctx) {
+  const { sizeMode, groupBy, tagLabels, myAddresses, filters } = ctx;
+  if (n.dimension === "folder" && n.children?.length) {
+    // A real folder with real subfolders (or the synthetic "(direct in
+    // this folder)" entry) - drill structurally, arbitrarily deep,
+    // following the account's own folder nesting.
+    return withSizeValue(n.children.map((c) => ({ ...c })), sizeMode);
+  }
+
+  // A leaf folder or a content-dimension node: regroup its own messages
+  // one step finer - see the comment above nextDimension().
+  const currentDim = n.dimension === "folder" ? null : n.dimension;
+  const next = nextDimension(currentDim, groupBy);
+  if (!next || !n.messages?.length) return [];
+
+  const grouped = groupMessages(n.messages, next, tagLabels, myAddresses);
+  return withSizeValue(grouped, sizeMode).map((g) => ({
+    ...g,
+    folderId: n.folderId, // "go to search" always targets the folder we're inside
+    // Refines the active filters rather than replacing them - drilling
+    // into one domain should narrow, not lose, an active tag filter.
+    jumpFilter: { ...filters, ...jumpFilterFor(next, g.groupKey, g.messages[0]) },
+  }));
+}
+
+// Gap around a cell's edge when its children are drawn nested inside it,
+// and the minimum size worth expanding into - below this it'd just be
+// unreadable slivers, so it stays collapsed (still drillable by a click).
+const NEST_INSET = 6;
+const MIN_EXPANDABLE_W = 70;
+const MIN_EXPANDABLE_H = 64; // must leave room for HEADER_H too
+// A container's own label bar, reserved above its nested children -
+// otherwise, once several containers are expanded inline at once (several
+// years, each showing its own months), there's no way to tell which
+// cluster of children belongs to which container.
+const HEADER_H = 17;
+
+// Squarifies `nodes` into the `box` {x,y,w,h} and, for any cell with `levelsLeft`
+// > 1 and children (`expand(node)` returns them), recurses INTO that
+// cell's own rectangle (inset by NEST_INSET) for its children - producing
+// one FLAT list of {node,x,y,w,h,depthIndex,hasInlineChildren} entries
+// all in the SAME coordinate space as the outer container, so every level
+// can be drawn as a plain sibling <div> (no nested DOM, no
+// measurement/reflow needed to position an inner level).
+function layoutTree(nodes, box, levelsLeft, depthIndex, expand) {
+  const rects = squarify(nodes.filter((n) => n.value > 0), box.x, box.y, box.w, box.h);
+  const out = [];
+  for (const r of rects) {
+    // Never auto-expand sender level into individual messages via Depth -
+    // every message has count 1, so it's a wall of same-size tiles, not
+    // informative. Month gets the same treatment: it's meant to be the
+    // max automatic step in the Year -> Month breakdown. Either way, an
+    // explicit click can still go further (drillInto()).
+    const canExpand = levelsLeft > 1 && r.node.dimension !== "sender" && r.node.dimension !== "month"
+      && r.w >= MIN_EXPANDABLE_W && r.h >= MIN_EXPANDABLE_H;
+    const kids = canExpand ? expand(r.node) : [];
+    // A single child is the same 100%-of-area group just relabeled one
+    // dimension finer - conveys nothing new, so only expand when there's
+    // genuinely more than one group to show.
+    const hasInlineChildren = kids.length > 1;
+    out.push({ node: r.node, x: r.x, y: r.y, w: r.w, h: r.h, depthIndex, hasInlineChildren });
+    if (hasInlineChildren) {
+      // The header eats into the top inset only - left/right/bottom stay
+      // a plain NEST_INSET.
+      const inner = {
+        x: r.x + NEST_INSET, y: r.y + NEST_INSET + HEADER_H,
+        w: r.w - NEST_INSET * 2, h: r.h - NEST_INSET * 2 - HEADER_H,
+      };
+      out.push(...layoutTree(kids, inner, levelsLeft - 1, depthIndex + 1, expand));
+    }
+  }
+  return out;
+}
+
+// One legend entry per DISPLAYED label (deduplicated): what actually
+// colors it - normally the same string, but groupMessages()'s overflow
+// "(N more)" node has a null colorKey - plus a running message-count
+// total, since several folder-level nodes can share the same dominant
+// group and need to add up rather than the last one overwriting the count.
+function legendEntries(nodes, groupBy) {
+  const seen = new Map();
+  for (const n of nodes) {
+    const isFolder = n.dimension === "folder";
+    const label = isFolder ? groupFor(n, groupBy).group : n.label;
+    const colorKey = isFolder ? label : n.colorKey;
+    const prev = seen.get(label);
+    seen.set(label, { colorKey, count: (prev ? prev.count : 0) + n.count });
+  }
+  return seen;
 }
 
 // --- the real boundaries: reading mail, and jumping to a search view. -----
@@ -593,6 +713,7 @@ async function realReadCache(accountId) {
     const stored = await browser.storage.local.get(key);
     return stored[key] || null;
   } catch (e) {
+    // no cache is fine - the view just loads from scratch
     return null;
   }
 }
@@ -614,6 +735,8 @@ let readCacheImpl = realReadCache;
 let writeCacheImpl = realWriteCache;
 
 // --- DOM wiring (real extension page only) ------------------------------
+
+function fmtSize(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : mb.toFixed(1) + " MB"; }
 
 function initUi() {
   const statusEl = document.getElementById("status");
@@ -662,8 +785,6 @@ function initUi() {
   // visible address bar.
   let pendingFolderId = new URLSearchParams(location.search).get("folder");
 
-  function fmtSize(mb) { return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : mb.toFixed(1) + " MB"; }
-
   function currentFilters() {
     return { tagKeys: [...selectedTagKeys], addressText: addressInput.value, hideSentByMe };
   }
@@ -701,7 +822,7 @@ function initUi() {
   // concept (already surfaced as real folders by buildFolderTree()),
   // so "Tag" is the wrong word here.
   function applyAutoGroupBy() {
-    const anyTagged = allMessages.some((m) => (m.tags || []).length > 0);
+    const anyTagged = hasAnyTag(allMessages);
     groupByEls.tag.textContent = anyTagged ? "Tag" : "Label";
     if (groupByAutoPicked) {
       const preferred = anyTagged ? "tag" : "domain";
@@ -742,11 +863,7 @@ function initUi() {
 
       writeCacheImpl(accountId, messages, labels); // fire-and-forget
 
-      const unchanged = cached
-        && messages.length === cached.messages.length
-        && messageSignature(messages) === messageSignature(cached.messages)
-        && JSON.stringify(labels) === JSON.stringify(cached.tagLabels);
-      if (unchanged) return;
+      if (cacheMatches(cached, messages, labels)) return;
 
       allMessages = messages;
       tagLabels = labels;
@@ -757,7 +874,7 @@ function initUi() {
     } catch (e) {
       if (!cached) {
         statusEl.hidden = false;
-        statusEl.textContent = "Error: " + ((e && e.message) || e);
+        statusEl.textContent = "Error: " + (e?.message || e);
       } // else: keep showing the cached view rather than replace it with an error
     }
   }
@@ -790,7 +907,7 @@ function initUi() {
   }
 
   function withValue(nodes) {
-    return nodes.map(n => ({ ...n, value: (sizeMode === "count" ? n.count : n.size_mb) || 0.01 }));
+    return withSizeValue(nodes, sizeMode);
   }
 
   let tagPalette = { Uncategorized: UNCATEGORIZED_COLOR };
@@ -827,184 +944,118 @@ function initUi() {
     hideSentByMeBtn.classList.toggle("active", hideSentByMe);
   }
 
-  // What one more level of drill-down looks like for a node, without
-  // touching the stack - shared by drillInto() (a click, pushed onto
-  // the stack) and layoutTree()'s inline "show N levels at once"
-  // expansion, so both agree on exactly what's "inside" a given cell.
   function nextLevelNodes(n) {
-    if (n.dimension === "folder" && n.children && n.children.length) {
-      // A real folder with real subfolders (or the synthetic "(direct
-      // in this folder)" entry) - drill structurally, arbitrarily
-      // deep, following the account's own folder nesting.
-      return withValue(n.children.map((c) => ({ ...c })));
-    }
-
-    // A leaf folder or a content-dimension node: regroup its own
-    // messages one step finer - see the comment above nextDimension().
-    const currentDim = n.dimension === "folder" ? null : n.dimension;
-    const next = nextDimension(currentDim, groupBy);
-    if (!next || !n.messages || !n.messages.length) return [];
-
-    const grouped = groupMessages(n.messages, next, tagLabels, myAddresses);
-    return withValue(grouped).map((g) => ({
-      ...g,
-      folderId: n.folderId, // "go to search" always targets the folder we're inside
-      // Refines the active filters rather than replacing them -
-      // drilling into one domain should narrow, not lose, an active
-      // tag filter.
-      jumpFilter: { ...currentFilters(), ...jumpFilterFor(next, g.groupKey, g.messages[0]) },
-    }));
+    return nextLevelNodesFor(n, { sizeMode, groupBy, tagLabels, myAddresses, filters: currentFilters() });
   }
 
-  // Gap around a cell's edge when its children are drawn nested inside
-  // it, and the minimum size worth expanding into - below this it'd
-  // just be unreadable slivers, so it stays collapsed (still drillable
-  // by a click).
-  const NEST_INSET = 6;
-  const MIN_EXPANDABLE_W = 70;
-  const MIN_EXPANDABLE_H = 64; // must leave room for HEADER_H too
-  // A container's own label bar, reserved above its nested children -
-  // otherwise, once several containers are expanded inline at once
-  // (several years, each showing its own months), there's no way to
-  // tell which cluster of children belongs to which container.
-  const HEADER_H = 17;
+  // A container (children drawn inline) gets a slim header instead of its
+  // normal bottom label - layoutTree() reserved HEADER_H of space above
+  // its children for exactly this. Clicking a container still drills into
+  // just that one node (e.g. focus on 2012 alone); the hint sits right
+  // after the label in the header's own flex row.
+  function makeCellHeader(n) {
+    const header = document.createElement("div");
+    header.className = "cell-header";
+    const headerLabel = document.createElement("span");
+    headerLabel.className = "cell-header-label";
+    headerLabel.textContent = n.label || folderName(n.path);
+    const headerHint = document.createElement("span");
+    headerHint.className = "cell-header-hint";
+    headerHint.textContent = "▸";
+    header.append(headerLabel, headerHint);
+    return header;
+  }
 
-  // Squarifies `nodes` into [x,y,w,h] and, for any cell with
-  // `levelsLeft` > 1 and children, recurses INTO that cell's own
-  // rectangle (inset by NEST_INSET) for its children - producing one
-  // FLAT list of {node,x,y,w,h,depthIndex,hasInlineChildren} entries all
-  // in the SAME coordinate space as the outer container, so every level
-  // can be drawn as a plain sibling <div> (no nested DOM, no
-  // measurement/reflow needed to position an inner level).
-  function layoutTree(nodes, x, y, w, h, levelsLeft, depthIndex) {
-    const rects = squarify(nodes.filter((n) => n.value > 0), x, y, w, h);
-    const out = [];
-    for (const r of rects) {
-      // Never auto-expand sender level into individual messages via
-      // Depth - every message has count 1, so it's a wall of
-      // same-size tiles, not informative. Month gets the same
-      // treatment: it's meant to be the max automatic step in the
-      // Year -> Month breakdown. Either way, an explicit click can
-      // still go further (drillInto()).
-      const canExpand = levelsLeft > 1 && r.node.dimension !== "sender" && r.node.dimension !== "month"
-        && r.w >= MIN_EXPANDABLE_W && r.h >= MIN_EXPANDABLE_H;
-      const kids = canExpand ? nextLevelNodes(r.node) : [];
-      // A single child is the same 100%-of-area group just relabeled
-      // one dimension finer - conveys nothing new, so only expand
-      // when there's genuinely more than one group to show.
-      const hasInlineChildren = kids.length > 1;
-      out.push({ node: r.node, x: r.x, y: r.y, w: r.w, h: r.h, depthIndex, hasInlineChildren });
-      if (hasInlineChildren) {
-        // The header eats into the top inset only - left/right/bottom
-        // stay a plain NEST_INSET.
-        out.push(...layoutTree(
-          kids, r.x + NEST_INSET, r.y + NEST_INSET + HEADER_H,
-          r.w - NEST_INSET * 2, r.h - NEST_INSET * 2 - HEADER_H,
-          levelsLeft - 1, depthIndex + 1
-        ));
-      }
+  function makeGoButton(n, dimension) {
+    const goBtn = document.createElement("button");
+    goBtn.type = "button";
+    goBtn.className = "go-btn";
+    // addressType/year/month have no matching Thunderbird quick-filter
+    // facet (see jumpFilterFor()) - say so up front rather than let it
+    // look broken when this opens the whole folder unfiltered.
+    goBtn.title = NO_SEARCH_FACET.has(dimension)
+      ? "Open this in Thunderbird - Thunderbird has no date/address-type search filter, so this opens the whole folder unless another filter (tag, address) is also active"
+      : "Open this in Thunderbird, with the current filters applied (or just right-click the cell)";
+    goBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+    goBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openFolderSearchImpl(n.folderId, n.jumpFilter || currentFilters());
+    });
+    return goBtn;
+  }
+
+  function appendCellBody(div, n, dimension) {
+    const label = document.createElement("div");
+    label.className = "cell-label";
+    label.textContent = n.label || folderName(n.path);
+    const sub = document.createElement("div");
+    sub.className = "cell-sub";
+    sub.textContent = sizeMode === "count" ? `${n.count} msgs` : fmtSize(n.size_mb);
+    div.append(label, sub);
+
+    if (n.folderId) div.appendChild(makeGoButton(n, dimension));
+
+    // A quiet "there's more inside" mark for a cell that isn't expanded
+    // inline (Depth too low, too small, or already a single-group dead
+    // end) but could still be drilled by a click. Skipped for a true
+    // terminal (nextLevelNodes() empty).
+    if (nextLevelNodes(n).length) {
+      const hint = document.createElement("div");
+      hint.className = "drill-hint";
+      hint.textContent = "▸";
+      div.appendChild(hint);
     }
-    return out;
+  }
+
+  function wireCell(div, n, group, breakdown) {
+    div.addEventListener("pointermove", (e) => showTooltip(e, n, group, breakdown));
+    div.addEventListener("pointerenter", (e) => showTooltip(e, n, group, breakdown));
+    div.addEventListener("pointerleave", () => tooltipEl.classList.remove("show"));
+    div.addEventListener("click", () => drillInto(n));
+    // Right-click jumps straight to that exact search, same as the hover
+    // go-btn - reachable even on a container cell, whose go-btn is hidden
+    // this render.
+    div.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      if (n.folderId) openFolderSearchImpl(n.folderId, n.jumpFilter || currentFilters());
+    });
+  }
+
+  function buildCell(entry) {
+    const n = entry.node;
+    // Folder-level nodes still carry all four switchable breakdowns
+    // (groupFor picks the one Group-by is set to); a drill-level node
+    // (from groupMessages) is already a single dimension/key, colored via
+    // its own colorKey (see colorKeyFor()).
+    const isFolderLevel = n.dimension === "folder";
+    const dimension = isFolderLevel ? groupBy : n.dimension;
+    const { group, breakdown } = isFolderLevel ? groupFor(n, groupBy) : { group: n.label, breakdown: null };
+    const colorGroup = isFolderLevel ? group : n.colorKey;
+    const isEmpty = group === EMPTY_LABEL;
+
+    const div = document.createElement("div");
+    div.className = "cell" + (isEmpty ? " empty" : "") + (entry.w < 46 || entry.h < 34 ? " tiny" : "");
+    div.style.left = entry.x + "px";
+    div.style.top = entry.y + "px";
+    div.style.width = Math.max(entry.w - 2, 0) + "px";
+    div.style.height = Math.max(entry.h - 2, 0) + "px";
+    if (!isEmpty) div.style.background = colorForKey(dimension, colorGroup, tagPalette);
+
+    if (entry.hasInlineChildren) div.appendChild(makeCellHeader(n));
+    else appendCellBody(div, n, dimension);
+    wireCell(div, n, group, breakdown);
+    return div;
   }
 
   function render() {
-    const level = stack[stack.length - 1];
+    const level = stack.at(-1);
     const rect = treemapEl.getBoundingClientRect();
     const nodes = level.nodes.filter(n => n.value > 0);
-    const flat = layoutTree(nodes, 0, 0, rect.width || 800, rect.height || 400, depth, 0);
+    const box = { x: 0, y: 0, w: rect.width || 800, h: rect.height || 400 };
+    const flat = layoutTree(nodes, box, depth, 0, nextLevelNodes);
 
     treemapEl.innerHTML = "";
-    for (const entry of flat) {
-      const n = entry.node;
-      // Folder-level nodes still carry all four switchable breakdowns
-      // (groupFor picks the one Group-by is set to); a drill-level node
-      // (from groupMessages) is already a single dimension/key, colored
-      // via its own colorKey (see colorKeyFor()).
-      const isFolderLevel = n.dimension === "folder";
-      const dimension = isFolderLevel ? groupBy : n.dimension;
-      const { group, breakdown } = isFolderLevel ? groupFor(n, groupBy) : { group: n.label, breakdown: null };
-      const colorGroup = isFolderLevel ? group : n.colorKey;
-      const isEmpty = group === EMPTY_LABEL;
-      const div = document.createElement("div");
-      div.className = "cell" + (isEmpty ? " empty" : "") + (entry.w < 46 || entry.h < 34 ? " tiny" : "");
-      div.style.left = entry.x + "px";
-      div.style.top = entry.y + "px";
-      div.style.width = Math.max(entry.w - 2, 0) + "px";
-      div.style.height = Math.max(entry.h - 2, 0) + "px";
-      if (!isEmpty) div.style.background = colorForKey(dimension, colorGroup, tagPalette);
-
-      // A container (children drawn inline) gets a slim header instead
-      // of its normal bottom label - layoutTree() reserved HEADER_H of
-      // space above its children for exactly this.
-      if (entry.hasInlineChildren) {
-        const header = document.createElement("div");
-        header.className = "cell-header";
-        const headerLabel = document.createElement("span");
-        headerLabel.className = "cell-header-label";
-        headerLabel.textContent = n.label || folderName(n.path);
-        // Clicking a container still drills into just that one node
-        // (e.g. focus on 2012 alone instead of seeing every year at
-        // once) - always true here, since hasInlineChildren already
-        // means there's more than one group inside. Sits right after
-        // the label in the header's own flex row, not a separately
-        // positioned corner element.
-        const headerHint = document.createElement("span");
-        headerHint.className = "cell-header-hint";
-        headerHint.textContent = "▸";
-        header.append(headerLabel, headerHint);
-        div.appendChild(header);
-      } else {
-        const label = document.createElement("div");
-        label.className = "cell-label";
-        label.textContent = n.label || folderName(n.path);
-        const sub = document.createElement("div");
-        sub.className = "cell-sub";
-        sub.textContent = sizeMode === "count" ? `${n.count} msgs` : fmtSize(n.size_mb);
-        div.append(label, sub);
-
-        if (n.folderId) {
-          const goBtn = document.createElement("button");
-          goBtn.type = "button";
-          goBtn.className = "go-btn";
-          // addressType/year/month have no matching Thunderbird quick-filter
-          // facet (see jumpFilterFor()) - say so up front rather than let it
-          // look broken when this opens the whole folder unfiltered.
-          goBtn.title = NO_SEARCH_FACET.has(dimension)
-            ? "Open this in Thunderbird - Thunderbird has no date/address-type search filter, so this opens the whole folder unless another filter (tag, address) is also active"
-            : "Open this in Thunderbird, with the current filters applied (or just right-click the cell)";
-          goBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
-          goBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            openFolderSearchImpl(n.folderId, n.jumpFilter || currentFilters());
-          });
-          div.appendChild(goBtn);
-        }
-
-        // A quiet "there's more inside" mark for a cell that isn't
-        // expanded inline (Depth too low, too small, or already a
-        // single-group dead end) but could still be drilled by a
-        // click. Skipped for a true terminal (nextLevelNodes() empty).
-        if (nextLevelNodes(n).length) {
-          const hint = document.createElement("div");
-          hint.className = "drill-hint";
-          hint.textContent = "▸";
-          div.appendChild(hint);
-        }
-      }
-
-      div.addEventListener("pointermove", (e) => showTooltip(e, n, group, breakdown));
-      div.addEventListener("pointerenter", (e) => showTooltip(e, n, group, breakdown));
-      div.addEventListener("pointerleave", () => tooltipEl.classList.remove("show"));
-      div.addEventListener("click", () => drillInto(n));
-      // Right-click jumps straight to that exact search, same as the
-      // hover go-btn - reachable even on a container cell, whose
-      // go-btn is hidden this render.
-      div.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        if (n.folderId) openFolderSearchImpl(n.folderId, n.jumpFilter || currentFilters());
-      });
-      treemapEl.appendChild(div);
-    }
+    for (const entry of flat) treemapEl.appendChild(buildCell(entry));
     renderBreadcrumb();
     renderLegend(nodes);
   }
@@ -1019,7 +1070,7 @@ function initUi() {
     // The bottom of the drill chain: one specific email. "Group: <its
     // own subject>" would be a useless duplicate of the title, so show
     // what's actually useful about a single message instead.
-    const m = n.dimension === "message" ? n.messages && n.messages[0] : null;
+    const m = n.dimension === "message" ? n.messages?.[0] : null;
     const rows = m
       ? [["From", m.author || "-"], ["Date", m.date ? new Date(m.date).toLocaleString() : "-"], ["Size", fmtSize((m.size || 0) / 1024 / 1024)]]
       : [["Messages", n.count], ["Size", n.size_mb != null ? fmtSize(n.size_mb) : "-"], ["Group", group]];
@@ -1082,23 +1133,7 @@ function initUi() {
     // instead of a legend there.
     if (nodes.length && nodes[0].dimension === "message") return;
     const dimension = nodes.length && nodes[0].dimension !== "folder" ? nodes[0].dimension : groupBy;
-    // Keyed by the DISPLAYED label (deduplicated), valued by what
-    // actually colors it - normally the same string, but
-    // groupMessages()'s overflow "(N more)" node has a null colorKey -
-    // plus a running message-count total, since several folder-level
-    // nodes can share the same dominant group and need to add up rather
-    // than the last one just overwriting the count.
-    const seen = new Map();
-    for (const n of nodes) {
-      if (n.dimension === "folder") {
-        const { group } = groupFor(n, groupBy);
-        const prev = seen.get(group);
-        seen.set(group, { colorKey: group, count: (prev ? prev.count : 0) + n.count });
-      } else {
-        const prev = seen.get(n.label);
-        seen.set(n.label, { colorKey: n.colorKey, count: (prev ? prev.count : 0) + n.count });
-      }
-    }
+    const seen = legendEntries(nodes, groupBy);
     for (const [label, { colorKey, count }] of seen) {
       const item = document.createElement("div");
       item.className = "item";
@@ -1188,6 +1223,21 @@ if (typeof module !== "undefined" && module.exports) {
     buildFolderTree,
     findFolderPath,
     groupFor,
+    legendEntries,
+    withSizeValue,
+    nextLevelNodesFor,
+    layoutTree,
+    folderName,
+    fmtSize,
+    groupKeyFor,
+    labelForKey,
+    colorKeyFor,
+    realQueryAllMessages,
+    realListTags,
+    realListAccounts,
+    realOpenFolderSearch,
+    realReadCache,
+    realWriteCache,
     squarify,
     assignPalette,
     applyFilters,
@@ -1203,6 +1253,8 @@ if (typeof module !== "undefined" && module.exports) {
     colorForKey,
     messageSignature,
     cacheKeyFor,
+    cacheMatches,
+    hasAnyTag,
     __setQueryAllMessagesImplForTests: (fn) => { queryAllMessagesImpl = fn; },
     __setListTagsImplForTests: (fn) => { listTagsImpl = fn; },
     __setListAccountsImplForTests: (fn) => { listAccountsImpl = fn; },

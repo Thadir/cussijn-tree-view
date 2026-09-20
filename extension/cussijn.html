@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Cussijn Tree View</title>
@@ -143,7 +143,7 @@
   }
   #address-filter::placeholder { color: var(--ink-muted); }
   #filter-count {
-    font-size: 0.72em; font-weight: 600; color: #fff; background: #2a78d6;
+    font-size: 0.72em; font-weight: 600; color: #fff; background: #2872cc;
     border-radius: 100px; padding: 2px 8px;
   }
   #clear-filters { font-size: 0.82em; color: var(--ink-muted); background: none; border: none; cursor: pointer; text-decoration: underline; font-family: inherit; padding: 0; border-radius: 0; }
@@ -178,7 +178,7 @@
 <body>
   <header>
     <h1>Cussijn Tree View</h1>
-    <select id="account-select"></select>
+    <select id="account-select" aria-label="Account"></select>
     <button id="mode-count" class="active">By count</button>
     <button id="mode-size">By size</button>
     <span class="depth-ctrl" title="How many nested levels to show at once - folder(s), then Group-by, then sender, then individual messages. A cell with a ▸ mark still has more inside it - click the cell (or right-click for a shortcut) to step one level further in, regardless of Depth.">
@@ -203,7 +203,7 @@
     <span class="label">Filter</span>
     <button id="hide-sent-by-me" type="button" title="Hide messages you sent - IMAP defines &quot;All Mail&quot; as every message in the account, sent and received alike, so your own replies show up there too">Hide sent by me</button>
     <span id="tag-filters"></span>
-    <input id="address-filter" type="text" placeholder="Address contains, e.g. paypal.com">
+    <input id="address-filter" type="text" aria-label="Filter by address" placeholder="Address contains, e.g. paypal.com">
     <span id="filter-count" hidden></span>
     <button id="clear-filters" hidden>Clear</button>
   </div>

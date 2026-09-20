@@ -266,6 +266,28 @@ test("groupFor picks the right precomputed dimension", () => {
   assert.deepEqual(groupFor(node, "year"), { group: "2026", breakdown: { "2026": 3 } });
 });
 
+test("legendEntries sums the counts of folder nodes sharing one dominant group", () => {
+  const { legendEntries } = freshCussijn();
+  const folder = (dominantDomain, count) => ({ dimension: "folder", dominantDomain, count });
+  const entries = legendEntries([folder("paypal.com", 5), folder("kpn.com", 2), folder("paypal.com", 3)], "domain");
+  assert.deepEqual([...entries], [
+    ["paypal.com", { colorKey: "paypal.com", count: 8 }],
+    ["kpn.com", { colorKey: "kpn.com", count: 2 }],
+  ]);
+});
+
+test("legendEntries keys drill-level nodes by label and keeps their own colorKey, overflow included", () => {
+  const { legendEntries } = freshCussijn();
+  const entries = legendEntries([
+    { dimension: "sender", label: "a@x.com", colorKey: "a@x.com", count: 4 },
+    { dimension: "sender", label: "(7 more)", colorKey: null, count: 7 },
+  ], "domain");
+  assert.deepEqual([...entries], [
+    ["a@x.com", { colorKey: "a@x.com", count: 4 }],
+    ["(7 more)", { colorKey: null, count: 7 }],
+  ]);
+});
+
 test("squarify covers the full rectangle and never overlaps", () => {
   const { squarify } = freshCussijn();
   const nodes = [{ id: "a", value: 50 }, { id: "b", value: 30 }, { id: "c", value: 20 }];
@@ -496,4 +518,289 @@ test("assignPalette gives every tag a distinct, stable color", () => {
   const colors = Object.values(palette);
   assert.equal(new Set(colors).size, colors.length, "colors should be unique");
   assert.equal(palette.Uncategorized, "#898781");
+});
+
+test("folderName takes the last path segment, and falls back to the whole path", () => {
+  const { folderName } = freshCussijn();
+  assert.equal(folderName("/Finance/Paypal"), "Paypal");
+  assert.equal(folderName("Inbox"), "Inbox");
+  assert.equal(folderName("/"), "/");
+});
+
+test("fmtSize switches from MB to GB at 1024", () => {
+  const { fmtSize } = freshCussijn();
+  assert.equal(fmtSize(0.5), "0.5 MB");
+  assert.equal(fmtSize(1023), "1023.0 MB");
+  assert.equal(fmtSize(2048), "2.0 GB");
+});
+
+test("groupKeyFor / labelForKey / colorKeyFor cope with missing fields", () => {
+  const { groupKeyFor, labelForKey, colorKeyFor } = freshCussijn();
+  assert.equal(groupKeyFor({}, "sender", []), "(unknown)");
+  assert.equal(groupKeyFor({}, "year", []), "(unknown)");
+  assert.equal(groupKeyFor({}, "month", []), "(unknown)");
+  assert.equal(groupKeyFor({}, "tag", []), "");
+  assert.equal(groupKeyFor({}, "no-such-dimension", []), "(unknown)");
+  // No id to key by: falls back to a composite that still tells messages apart.
+  assert.equal(groupKeyFor({ author: "a", subject: "s", date: "d" }, "message", []), "a|s|d");
+  assert.equal(groupKeyFor({ id: 0 }, "message", []), "0");
+
+  assert.equal(labelForKey("message", "1", {}, {}), "(no subject)");
+  assert.equal(labelForKey("message", "1", {}, undefined), "(no subject)");
+  assert.equal(labelForKey("tag", "", {}), "Uncategorized");
+  assert.equal(labelForKey("tag", "$a", { $a: "Alpha" }), "Alpha");
+  assert.equal(labelForKey("tag", "$b", {}), "$b");
+  assert.equal(colorKeyFor("message", "1", {}, {}), "(unknown)");
+  assert.equal(colorKeyFor("message", "1", {}, { author: "a@x.com" }), "a@x.com");
+});
+
+test("withSizeValue sizes by count or MB and never returns zero", () => {
+  const { withSizeValue } = freshCussijn();
+  const nodes = [{ count: 3, size_mb: 1.5 }, { count: 0, size_mb: 0 }];
+  assert.deepEqual(withSizeValue(nodes, "count").map((n) => n.value), [3, 0.01]);
+  assert.deepEqual(withSizeValue(nodes, "size").map((n) => n.value), [1.5, 0.01]);
+});
+
+const CTX = { sizeMode: "count", groupBy: "domain", tagLabels: {}, myAddresses: [], filters: {} };
+
+test("nextLevelNodesFor drills a folder with real subfolders structurally", () => {
+  const { nextLevelNodesFor } = freshCussijn();
+  const folder = {
+    dimension: "folder", messages: [{ author: "a@x.com" }],
+    children: [{ dimension: "folder", label: "Paypal", count: 2, size_mb: 1 }],
+  };
+  const [child] = nextLevelNodesFor(folder, CTX);
+  assert.equal(child.label, "Paypal");
+  assert.equal(child.value, 2);
+  assert.notEqual(child, folder.children[0]); // a copy, so sizing never mutates the tree
+});
+
+test("nextLevelNodesFor regroups a leaf folder by the active Group-by and narrows the jump filter", () => {
+  const { nextLevelNodesFor } = freshCussijn();
+  const leaf = {
+    dimension: "folder", folderId: "f1", children: [],
+    messages: [{ author: "a@paypal.com", size: 100 }, { author: "b@paypal.com", size: 100 }, { author: "c@klm.com", size: 100 }],
+  };
+  const nodes = nextLevelNodesFor(leaf, { ...CTX, filters: { tagKeys: ["$t"] } });
+  const paypal = nodes.find((n) => n.groupKey === "paypal.com");
+  assert.equal(paypal.count, 2);
+  assert.equal(paypal.folderId, "f1");
+  // The active tag filter survives; the domain narrows on top of it.
+  assert.deepEqual(paypal.jumpFilter, { tagKeys: ["$t"], addressText: "paypal.com", senderOnly: true });
+});
+
+test("nextLevelNodesFor follows year -> month -> sender -> message and stops at the bottom", () => {
+  const { nextLevelNodesFor } = freshCussijn();
+  const leaf = { dimension: "folder", children: [], messages: [{ id: 1, author: "a@x.com", date: "2025-03-01" }] };
+  const ctx = { ...CTX, groupBy: "year" };
+  const [year] = nextLevelNodesFor(leaf, ctx);
+  assert.equal(year.dimension, "year");
+  const [month] = nextLevelNodesFor(year, ctx);
+  assert.equal(month.dimension, "month");
+  const [sender] = nextLevelNodesFor(month, ctx);
+  assert.equal(sender.dimension, "sender");
+  const [message] = nextLevelNodesFor(sender, ctx);
+  assert.equal(message.dimension, "message");
+  assert.deepEqual(nextLevelNodesFor(message, ctx), []);
+});
+
+test("nextLevelNodesFor returns nothing for a node with no messages to regroup", () => {
+  const { nextLevelNodesFor } = freshCussijn();
+  assert.deepEqual(nextLevelNodesFor({ dimension: "folder", children: [], messages: [] }, CTX), []);
+  assert.deepEqual(nextLevelNodesFor({ dimension: "folder", children: [] }, CTX), []);
+});
+
+const expandTo = (kids) => () => kids;
+const kid = (label, dimension = "domain") => ({ dimension, label, value: 1 });
+
+test("layoutTree with one level left lays out flat and never asks for children", () => {
+  const { layoutTree } = freshCussijn();
+  const nodes = [{ dimension: "folder", value: 2 }, { dimension: "folder", value: 1 }];
+  const out = layoutTree(nodes, { x: 0, y: 0, w: 400, h: 300 }, 1, 0, () => assert.fail("must not expand"));
+  assert.equal(out.length, 2);
+  assert.ok(out.every((e) => e.depthIndex === 0 && e.hasInlineChildren === false));
+});
+
+test("layoutTree nests a cell's children inside its rectangle, under the header and inset", () => {
+  const { layoutTree } = freshCussijn();
+  const out = layoutTree([{ dimension: "folder", value: 1 }], { x: 0, y: 0, w: 400, h: 300 }, 2, 0, expandTo([kid("a"), kid("b")]));
+  const [parent, ...inner] = out;
+  assert.equal(parent.hasInlineChildren, true);
+  assert.equal(inner.length, 2);
+  for (const e of inner) {
+    assert.equal(e.depthIndex, 1);
+    assert.ok(e.x >= parent.x + 6 - 0.01 && e.x + e.w <= parent.x + parent.w - 6 + 0.01, "inside left/right inset");
+    assert.ok(e.y >= parent.y + 6 + 17 - 0.01, "below the header");
+    assert.ok(e.y + e.h <= parent.y + parent.h - 6 + 0.01, "inside bottom inset");
+  }
+});
+
+test("layoutTree never auto-expands a sender or month cell, however many children it has", () => {
+  const { layoutTree } = freshCussijn();
+  for (const dimension of ["sender", "month"]) {
+    const out = layoutTree([{ dimension, value: 1 }], { x: 0, y: 0, w: 400, h: 300 }, 3, 0, expandTo([kid("a"), kid("b")]));
+    assert.equal(out.length, 1);
+    assert.equal(out[0].hasInlineChildren, false);
+  }
+});
+
+test("layoutTree leaves a cell too small to read collapsed", () => {
+  const { layoutTree } = freshCussijn();
+  const narrow = layoutTree([{ dimension: "folder", value: 1 }], { x: 0, y: 0, w: 60, h: 300 }, 2, 0, expandTo([kid("a"), kid("b")]));
+  const short = layoutTree([{ dimension: "folder", value: 1 }], { x: 0, y: 0, w: 400, h: 60 }, 2, 0, expandTo([kid("a"), kid("b")]));
+  assert.equal(narrow.length, 1);
+  assert.equal(short.length, 1);
+});
+
+test("layoutTree does not expand into a single child - it would only hide the parent's label", () => {
+  const { layoutTree } = freshCussijn();
+  const out = layoutTree([{ dimension: "folder", value: 1 }], { x: 0, y: 0, w: 400, h: 300 }, 2, 0, expandTo([kid("only")]));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].hasInlineChildren, false);
+});
+
+test("layoutTree stops recursing when the requested depth runs out", () => {
+  const { layoutTree } = freshCussijn();
+  const out = layoutTree([{ dimension: "folder", value: 1 }], { x: 0, y: 0, w: 800, h: 600 }, 2, 0, expandTo([kid("a"), kid("b")]));
+  assert.equal(Math.max(...out.map((e) => e.depthIndex)), 1);
+  const deeper = layoutTree([{ dimension: "folder", value: 1 }], { x: 0, y: 0, w: 800, h: 600 }, 3, 0, expandTo([kid("a"), kid("b")]));
+  assert.equal(Math.max(...deeper.map((e) => e.depthIndex)), 2);
+});
+
+test("layoutTree drops zero-value nodes", () => {
+  const { layoutTree } = freshCussijn();
+  const out = layoutTree([{ dimension: "folder", value: 0 }, { dimension: "folder", value: 3 }], { x: 0, y: 0, w: 400, h: 300 }, 1, 0, expandTo([]));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].node.value, 3);
+});
+
+// --- the messenger.* / browser.* boundary, against fakes -------------------
+
+async function withGlobals(fakes, fn) {
+  const saved = {};
+  for (const key of Object.keys(fakes)) {
+    saved[key] = globalThis[key];
+    globalThis[key] = fakes[key];
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const key of Object.keys(fakes)) {
+      if (saved[key] === undefined) delete globalThis[key];
+      else globalThis[key] = saved[key];
+    }
+  }
+}
+
+test("realQueryAllMessages follows continueList until a page has no list id", async () => {
+  const { realQueryAllMessages } = freshCussijn();
+  const calls = [];
+  const messenger = {
+    messages: {
+      query: async (args) => { calls.push(["query", args]); return { id: "L1", messages: [1, 2] }; },
+      continueList: async (id) => {
+        calls.push(["continue", id]);
+        return id === "L1" ? { id: "L2", messages: [3] } : { messages: [4] };
+      },
+    },
+  };
+  const all = await withGlobals({ messenger }, () => realQueryAllMessages("acct1"));
+  assert.deepEqual(all, [1, 2, 3, 4]);
+  assert.deepEqual(calls, [
+    ["query", { accountId: "acct1", includeSubFolders: true }],
+    ["continue", "L1"],
+    ["continue", "L2"],
+  ]);
+});
+
+test("realQueryAllMessages returns a single page as-is", async () => {
+  const { realQueryAllMessages } = freshCussijn();
+  const messenger = { messages: { query: async () => ({ messages: [1] }), continueList: async () => assert.fail("no next page") } };
+  assert.deepEqual(await withGlobals({ messenger }, () => realQueryAllMessages("a")), [1]);
+});
+
+test("realListTags maps tag keys to display names, and realListAccounts asks for the folder tree", async () => {
+  const { realListTags, realListAccounts } = freshCussijn();
+  let listArg;
+  const messenger = {
+    messages: { listTags: async () => [{ key: "$a", tag: "Alpha" }, { key: "$b", tag: "Beta" }] },
+    accounts: { list: async (withFolders) => { listArg = withFolders; return ["acct"]; } },
+  };
+  await withGlobals({ messenger }, async () => {
+    assert.deepEqual(await realListTags(), { $a: "Alpha", $b: "Beta" });
+    assert.deepEqual(await realListAccounts(), ["acct"]);
+  });
+  assert.equal(listArg, true);
+});
+
+test("realOpenFolderSearch opens a tab once, reuses it, and reopens if it was closed", async () => {
+  const { realOpenFolderSearch } = freshCussijn();
+  const log = [];
+  let updateShouldFail = false;
+  const messenger = {
+    mailTabs: {
+      create: async (args) => { log.push(["create", args]); return { id: 7 }; },
+      update: async (id, args) => {
+        log.push(["update", id, args]);
+        if (updateShouldFail) throw new Error("no such tab");
+        return { id };
+      },
+      setQuickFilter: async (id, props) => { log.push(["filter", id, props]); },
+    },
+  };
+  await withGlobals({ messenger }, async () => {
+    await realOpenFolderSearch("f1", { addressText: "paypal.com" });
+    await realOpenFolderSearch("f2", {});
+    updateShouldFail = true;
+    await realOpenFolderSearch("f3", {});
+  });
+  assert.deepEqual(log.map((e) => e[0]), ["create", "filter", "update", "filter", "update", "create", "filter"]);
+  assert.deepEqual(log[0][1], { displayedFolder: "f1" });
+  assert.equal(log[1][2].text.text, "paypal.com");
+  assert.deepEqual(log[2].slice(1), [7, { displayedFolder: "f2" }]);
+  assert.deepEqual(log[3][2], { show: false });
+});
+
+test("realReadCache returns the stored entry, null when absent, and null when storage throws", async () => {
+  const { realReadCache, cacheKeyFor } = freshCussijn();
+  const entry = { messages: [1], tagLabels: {}, fetchedAt: 1 };
+  const good = { local: { get: async (key) => ({ [key]: key === cacheKeyFor("a") ? entry : undefined }) } };
+  const broken = { local: { get: async () => { throw new Error("quota"); } } };
+  await withGlobals({ browser: { storage: good } }, async () => {
+    assert.deepEqual(await realReadCache("a"), entry);
+    assert.equal(await realReadCache("other"), null);
+  });
+  await withGlobals({ browser: { storage: broken } }, async () => {
+    assert.equal(await realReadCache("a"), null);
+  });
+});
+
+test("realWriteCache stores messages and tag labels under the account's key, and swallows storage errors", async () => {
+  const { realWriteCache, cacheKeyFor } = freshCussijn();
+  let written;
+  const good = { local: { set: async (obj) => { written = obj; } } };
+  const broken = { local: { set: async () => { throw new Error("quota"); } } };
+  await withGlobals({ browser: { storage: good } }, () => realWriteCache("a", [1, 2], { $a: "Alpha" }));
+  const stored = written[cacheKeyFor("a")];
+  assert.deepEqual(stored.messages, [1, 2]);
+  assert.deepEqual(stored.tagLabels, { $a: "Alpha" });
+  assert.equal(typeof stored.fetchedAt, "number");
+  await withGlobals({ browser: { storage: broken } }, () => realWriteCache("a", [], {}));
+});
+
+test("cacheMatches is true only when messages, their ids and the tag labels all match", () => {
+  const { cacheMatches } = freshCussijn();
+  const cached = { messages: [{ id: 1 }, { id: 2 }], tagLabels: { $a: "Alpha" } };
+  assert.equal(cacheMatches(cached, [{ id: 2 }, { id: 1 }], { $a: "Alpha" }), true);
+  assert.equal(cacheMatches(cached, [{ id: 1 }], { $a: "Alpha" }), false); // fewer messages
+  assert.equal(cacheMatches(cached, [{ id: 1 }, { id: 3 }], { $a: "Alpha" }), false); // same count, different message
+  assert.equal(cacheMatches(cached, [{ id: 1 }, { id: 2 }], { $a: "Renamed" }), false); // a tag was renamed
+  assert.equal(cacheMatches(null, [{ id: 1 }], {}), false); // nothing cached yet
+});
+
+test("hasAnyTag is false for an account where no message carries a tag", () => {
+  const { hasAnyTag } = freshCussijn();
+  assert.equal(hasAnyTag([{ tags: [] }, {}]), false);
+  assert.equal(hasAnyTag([{ tags: [] }, { tags: ["$a"] }]), true);
+  assert.equal(hasAnyTag([]), false);
 });

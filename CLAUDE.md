@@ -74,11 +74,18 @@ extension/
                       jumpFilterFor, squarify, applyFilters,
                       buildQuickFilterProps, classifyAddressType,
                       isSentByMe, messageYear, messageSignature,
-                      cacheKeyFor, hashColor) - the DOM wiring and the
-                      real messenger.* calls are not unit-tested: they
-                      need a live Thunderbird to exercise meaningfully,
+                      cacheKeyFor, cacheMatches, hasAnyTag, hashColor,
+                      legendEntries, nextLevelNodesFor, layoutTree,
+                      withSizeValue, folderName, fmtSize) plus the thin
+                      messenger.*/browser.* boundary functions
+                      (realQueryAllMessages, realOpenFolderSearch,
+                      realReadCache, ...) against fake globals.
+                      `initUi()`'s DOM wiring is not unit-tested: it
+                      needs a live Thunderbird to exercise meaningfully,
                       and this dev environment doesn't have one (see
-                      "Known gaps").
+                      "Known gaps"). Keep new logic OUT of `initUi()`
+                      and in a module-level function it calls - that is
+                      what makes it testable.
   options.html        a short about page - there's nothing to configure.
 
 build/                podman-based lint/test/package pipeline (Containerfile,
@@ -93,6 +100,8 @@ build/                podman-based lint/test/package pipeline (Containerfile,
                       one; the checked-in manifest.json's version is
                       never touched. Also copies the result to Thadir's
                       SequoiaView folder (see "Where things run").
+                      `sonar.sh` runs a SonarQube code-quality scan in a
+                      container (see "CI/CD & releases").
 e2e/                  podman-based Robot Framework smoke suite against a
                       REAL headless Thunderbird over Marionette (not
                       Firefox - see e2e/README.md for why that's a category
@@ -330,9 +339,11 @@ e2e/                  podman-based Robot Framework smoke suite against a
   identities at all.
 - **`nextLevelNodes()`, `layoutTree()`, and the "Depth" control turn the
   same drill-down into an at-once nested view, not just a click-per-level
-  one.** `nextLevelNodes(n)` is `drillInto()`'s "what's one step inside
-  this node" logic pulled out into its own function specifically so
-  `layoutTree()` can call the SAME logic to expand a cell's children
+  one.** `nextLevelNodes(n)` (a thin wrapper in `initUi()` over the pure,
+  module-level `nextLevelNodesFor(n, ctx)`) is `drillInto()`'s "what's
+  one step inside this node" logic pulled out into its own function
+  specifically so `layoutTree()` (also module-level and pure; it takes
+  the expansion function as a parameter) can call the SAME logic to expand a cell's children
   INLINE (nested inside its own rectangle, still in the outer
   container's coordinate space) when the user's chosen "Depth" allows
   more than one level to be visible at once. Depth changes only
@@ -508,15 +519,28 @@ e2e/                  podman-based Robot Framework smoke suite against a
   level metadata no manifest key or API call in this pipeline sets, a
   genuine one-time human step (see README's "Publishing to Thunderbird
   Add-ons"), not a bug in `publish-thunderbird.yml` to chase.
-- **SonarQube Cloud scans via `.github/workflows/sonar.yml`, deliberately
-  separate from `ci.yml`.** `test` in `ci.yml` is the required status
-  check, so the scan lives in its own workflow and every step is gated on
-  `SONAR_TOKEN` being present - a missing secret, fork PR, or Dependabot
-  PR skips the scan and still passes. Config is `sonar-project.properties`
-  (sources `extension/`, tests excluded). `SONAR_TOKEN`, the Sonar project,
-  and turning off Sonar's Automatic Analysis are human steps (README's
-  "Code quality" section). Don't make the scan a required check or wire it
-  into the `test` job.
+- **SonarQube runs as a container, not a hosted service.**
+  `build/sonar.sh` runs the unit tests with the lcov reporter (in a
+  `node:20-slim` container; Node 20 supports it), starts
+  `sonarqube:community`, scans `extension/` (`sonar-project.properties`;
+  tests excluded), and prints the quality gate, coverage and headline
+  metrics. It is report-only - it exits 0 whatever the gate says. The
+  gate wants 80% coverage on new code, so it reads ERROR when a change
+  touches `initUi()`'s untested DOM wiring; that is expected, not a
+  regression. Deliberate findings (swallowed-error catches, the `void` on
+  `runtime.lastError`, `hashColor()`'s `charCodeAt`) are ignored through
+  `sonar.issue.ignore.multicriteria` in `sonar-project.properties`, each
+  with its reason there - add to that list rather than sprinkling
+  `NOSONAR` comments. The same script serves both places: locally under podman
+  (server left up at localhost:9000 for browsing) and in
+  `.github/workflows/sonar.yml` with `CONTAINER_ENGINE=docker` (server
+  discarded with the runner, result in the job summary). Elasticsearch's
+  mmap is switched off in the container because stock Linux hosts and
+  GitHub runners have too low a `vm.max_map_count`. The workflow is
+  deliberately separate from `ci.yml`: `test` there is the required check
+  and the scan must never be able to block a merge. Don't move the scan
+  into the `test` job or make it required. No hosted SonarQube Cloud, no
+  `SONAR_TOKEN` secret.
 - **Dependabot has exactly two ecosystems to watch, both grouped weekly**
   (`.github/dependabot.yml`): `github-actions` (the actions these
   workflows use) and `docker` (`build/Containerfile`'s `node:20-slim`
@@ -532,8 +556,8 @@ e2e/                  podman-based Robot Framework smoke suite against a
   == 'push'` - not on every PR, so unmerged/abandoned work never
   touches it) runs `node --test --experimental-test-coverage`, parses
   the "all files" line-% out of its human-readable table output (`awk
-  -F'|' '/all files/ {...}'` - there's no JSON/lcov output mode for
-  this reporter, hence parsing text), and pushes a small shields.io
+  -F'|' '/all files/ {...}'` - one number is all the badge needs), and
+  pushes a small shields.io
   "endpoint" JSON file (`{schemaVersion, label, message, color}`) to a
   separate, UNPROTECTED `badges` branch - `git push` there needs no PAT,
   main's branch protection doesn't apply to a different branch.

@@ -46,8 +46,9 @@ async function currentDisplayedFolderId() {
   try {
     const tabs = await messenger.mailTabs.query({ currentWindow: true });
     const tab = tabs.find((t) => t.active) || tabs[0];
-    return tab && tab.displayedFolder && tab.displayedFolder.id;
+    return tab?.displayedFolder?.id;
   } catch (e) {
+    // no mail tab to read a folder from - open with no folder in mind
     return undefined;
   }
 }
@@ -61,20 +62,21 @@ async function openOrFocusView(folderId) {
       await messenger.tabs.update(viewTabId, { active: true, url });
       return;
     } catch (e) {
-      viewTabId = null; // tab was closed since - fall through and open a new one
+      // tab was closed since - fall through and open a new one
+      viewTabId = null;
     }
   }
   const tab = await messenger.tabs.create({ url });
   viewTabId = tab.id;
 }
 
-if (messenger.tabs && messenger.tabs.onRemoved) {
+if (messenger.tabs?.onRemoved) {
   messenger.tabs.onRemoved.addListener((tabId) => {
     if (tabId === viewTabId) viewTabId = null;
   });
 }
 
-if (messenger.commands && messenger.commands.onCommand) {
+if (messenger.commands?.onCommand) {
   messenger.commands.onCommand.addListener(async (command) => {
     if (command === "open-cussijn-tree-view") openOrFocusView(await currentDisplayedFolderId());
   });
@@ -101,8 +103,8 @@ if (messenger.menus) {
     if (info.menuItemId === TOOLS_MENU_ID) {
       currentDisplayedFolderId().then(openOrFocusView);
     } else if (info.menuItemId === FOLDER_MENU_ID) {
-      const folder = info.selectedFolders && info.selectedFolders[0];
-      openOrFocusView(folder && folder.id);
+      const folder = info.selectedFolders?.[0];
+      openOrFocusView(folder?.id);
     }
   });
 }

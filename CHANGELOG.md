@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.1 - bugfix
+
+Accessibility fixes: the page now declares its language, the account
+picker and address filter are labeled for screen readers, and the
+filter-count badge has enough contrast. No behavior changes otherwise;
+the rest of this release is internal (more unit tests, a code-quality
+scan).
+
 ## v1.0.0 - major
 
 First public release: a SequoiaView-style treemap of your Thunderbird

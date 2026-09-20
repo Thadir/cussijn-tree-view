@@ -224,6 +224,28 @@ DOM from here.
   auto-merge (squash) once CI passes, via
   `.github/workflows/dependabot-auto-merge.yml`.
 
+### Code quality (SonarQube Cloud)
+
+`.github/workflows/sonar.yml` scans `extension/` on every push to `main`
+and every pull request, using `sonar-project.properties`. It's a separate
+workflow from `ci.yml` and isn't a required check, so it can't block a
+merge. Until the token below exists (and on fork/Dependabot PRs, where
+GitHub withholds secrets) it skips itself and passes.
+
+One-time setup, which only you can do:
+
+1. Sign in at [sonarcloud.io](https://sonarcloud.io) with GitHub and import
+   this repo. The free tier covers public repos.
+2. In the project's **Administration -> Analysis Method**, turn off
+   **Automatic Analysis** - it can't run alongside the CI scan.
+3. Check that the organization and project key shown there match
+   `sonar.organization` and `sonar.projectKey` in `sonar-project.properties`.
+4. Generate a token (**My Account -> Security**) and add it as the repo
+   Actions secret `SONAR_TOKEN`.
+
+Unit-test coverage isn't sent to Sonar yet: CI runs Node 20, whose test
+runner has no lcov output.
+
 ### Publishing to Thunderbird Add-ons
 
 The automated submission needs an ATN developer account and API

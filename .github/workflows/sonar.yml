@@ -1,13 +1,11 @@
 name: SonarQube
 
-# Code-quality scan on SonarQube Cloud (free for public repos). Kept out of
-# ci.yml on purpose: "test" there is the required status check, and this
-# scan must never be able to block a merge or fail a build because a
-# secret is missing.
-#
-# Needs one repo secret, SONAR_TOKEN (see README's "Code quality" section).
-# Without it - or on a fork/Dependabot PR, where GitHub withholds secrets -
-# every step below is skipped and the job still passes.
+# Code-quality scan against a throwaway SonarQube Community container that
+# build/sonar.sh starts on the runner - the same script `./build/sonar.sh`
+# runs locally under podman. Kept out of ci.yml on purpose: "test" there is
+# the required status check, and this scan is report-only and must never be
+# able to block a merge. The server is discarded with the runner, so there's
+# no dashboard to browse here; the result is in the job summary.
 on:
   push:
     branches: [main]
@@ -16,22 +14,21 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   sonar:
     runs-on: ubuntu-latest
-    env:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    timeout-minutes: 20
     steps:
-      - name: Skip notice
-        if: ${{ env.SONAR_TOKEN == '' }}
-        run: echo "SONAR_TOKEN not available - skipping the SonarQube scan."
-
       - uses: actions/checkout@v7
-        if: ${{ env.SONAR_TOKEN != '' }}
-        with:
-          fetch-depth: 0
 
-      - uses: SonarSource/sonarqube-scan-action@v8
-        if: ${{ env.SONAR_TOKEN != '' }}
+      - name: Scan
+        env:
+          CONTAINER_ENGINE: docker
+        run: ./build/sonar.sh
+
+      - name: Remove the server container
+        if: always()
+        env:
+          CONTAINER_ENGINE: docker
+        run: ./build/sonar.sh stop

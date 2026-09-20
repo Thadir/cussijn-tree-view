@@ -1,0 +1,37 @@
+name: SonarQube
+
+# Code-quality scan on SonarQube Cloud (free for public repos). Kept out of
+# ci.yml on purpose: "test" there is the required status check, and this
+# scan must never be able to block a merge or fail a build because a
+# secret is missing.
+#
+# Needs one repo secret, SONAR_TOKEN (see README's "Code quality" section).
+# Without it - or on a fork/Dependabot PR, where GitHub withholds secrets -
+# every step below is skipped and the job still passes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sonar:
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Skip notice
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: echo "SONAR_TOKEN not available - skipping the SonarQube scan."
+
+      - uses: actions/checkout@v7
+        if: ${{ env.SONAR_TOKEN != '' }}
+        with:
+          fetch-depth: 0
+
+      - uses: SonarSource/sonarqube-scan-action@v8
+        if: ${{ env.SONAR_TOKEN != '' }}

@@ -508,6 +508,15 @@ e2e/                  podman-based Robot Framework smoke suite against a
   level metadata no manifest key or API call in this pipeline sets, a
   genuine one-time human step (see README's "Publishing to Thunderbird
   Add-ons"), not a bug in `publish-thunderbird.yml` to chase.
+- **SonarQube Cloud scans via `.github/workflows/sonar.yml`, deliberately
+  separate from `ci.yml`.** `test` in `ci.yml` is the required status
+  check, so the scan lives in its own workflow and every step is gated on
+  `SONAR_TOKEN` being present - a missing secret, fork PR, or Dependabot
+  PR skips the scan and still passes. Config is `sonar-project.properties`
+  (sources `extension/`, tests excluded). `SONAR_TOKEN`, the Sonar project,
+  and turning off Sonar's Automatic Analysis are human steps (README's
+  "Code quality" section). Don't make the scan a required check or wire it
+  into the `test` job.
 - **Dependabot has exactly two ecosystems to watch, both grouped weekly**
   (`.github/dependabot.yml`): `github-actions` (the actions these
   workflows use) and `docker` (`build/Containerfile`'s `node:20-slim`

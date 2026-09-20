@@ -281,6 +281,11 @@ metadata, not something any manifest key or API call sets, so the
 pipeline can't do it for you. One-time only; every release after that
 should go through automatically.
 
+## License
+
+[MPL-2.0](LICENSE). The same license is declared on the Thunderbird
+Add-ons listing, sent with every submission by `publish-thunderbird.yml`.
+
 ## Privacy
 
 This extension collects and transmits nothing. It calls only local
@@ -291,6 +296,7 @@ itself.
 
 ## Files
 
+- `LICENSE` - MPL-2.0.
 - `extension/manifest.json` - permissions (`accountsRead`,
   `accountsFolders`, `messagesRead`, `messagesTags`, `menus`, `storage` -
   all read-only, UI-only, or local-only, no `compose`/`messagesMove`/

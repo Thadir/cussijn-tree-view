@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.1 - bugfix
+
+From #17.
+
 ## v1.0.0 - major
 
 First public release: a SequoiaView-style treemap of your Thunderbird

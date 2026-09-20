@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.0 - minor
+
+From #19.
+
 ## v1.0.1 - bugfix
 
 Accessibility fixes: the page now declares its language, the account

@@ -511,6 +511,13 @@ e2e/                  podman-based Robot Framework smoke suite against a
   upload just means it doesn't wait around for that async result, not
   that signing itself didn't happen. Don't reintroduce the old
   "unverified, may need a manual first upload" hedge; this is settled.
+  `publish-thunderbird.yml` also sends, with every submission, the
+  license (`MPL-2.0`, matching the repo's `LICENSE`), the version's
+  CHANGELOG.md entry as ATN's "Version Notes" (`releaseNotes`), and fixed
+  reviewer notes (`approvalNotes`). The version ATN sees is the manifest's
+  plain `X.Y.Z` (`Signing Cussijn Tree View 1.0.1...`); the `v` exists only
+  in the git tag. The changelog entry must therefore be in the release PR
+  before it merges.
   **But the SECOND listed version needs one prerequisite, also confirmed
   live (v1.0.1 failed on it)**: ATN rejects a second listed version via
   the API with `You cannot add a listed version to this addon via the

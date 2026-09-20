@@ -65,6 +65,25 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_TAG" dist/cussijn-tree-view.xpi --clobber
 
+      # ATN's "Version Notes" for this release: the matching CHANGELOG.md
+      # entry, read from the tagged commit. release.yml's hop 1 writes the
+      # entry into the release PR, so it is in the tag.
+      - name: Read this version's release notes from CHANGELOG.md
+        id: notes
+        run: |
+          python3 - "${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT" <<'PY'
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md").read()
+          m = re.search(rf"^## v{re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+          notes = m.group(1).split("Entries below")[0].strip() if m else ""
+          if not notes:
+              print(f"::warning::No CHANGELOG.md entry found for v{version}", file=sys.stderr)
+          print("notes<<NOTES_EOF")
+          print(notes)
+          print("NOTES_EOF")
+          PY
+
       - name: Lint before submitting
         uses: kewisch/action-web-ext@v2
         with:
@@ -80,3 +99,11 @@ jobs:
           apiUrlPrefix: https://addons.thunderbird.net/api/v4
           apiKey: ${{ secrets.ATN_API_KEY }}
           apiSecret: ${{ secrets.ATN_API_SECRET }}
+          license: MPL-2.0
+          releaseNotes: ${{ steps.notes.outputs.notes }}
+          approvalNotes: >-
+            Plain JavaScript, HTML and CSS with no build step, bundler,
+            minification or dependencies: the .xpi contains the files in
+            extension/ as-is (tests excluded), so no separate source upload
+            is needed. Read-only access to mail via Thunderbird's own APIs;
+            no network requests.
